@@ -276,16 +276,18 @@ class SettingsGUI:
 
         self.tree = ttk.Treeview(
             tree_container,
-            columns=("index", "title", "locked"),
+            columns=("index", "title", "locked", "overlay"),
             show="headings",
             height=15,
         )
         self.tree.heading("index", text="슬롯")
         self.tree.heading("title", text="창 제목")
         self.tree.heading("locked", text="고정")
-        self.tree.column("index", width=60, anchor="center")
-        self.tree.column("title", width=380)
-        self.tree.column("locked", width=60, anchor="center")
+        self.tree.heading("overlay", text="덮개")
+        self.tree.column("index", width=50, anchor="center")
+        self.tree.column("title", width=320)
+        self.tree.column("locked", width=50, anchor="center")
+        self.tree.column("overlay", width=50, anchor="center")
 
         tree_sc = ttk.Scrollbar(
             tree_container, orient="vertical", command=self.tree.yview
@@ -296,6 +298,11 @@ class SettingsGUI:
 
         self.tree.bind("<Button-3>", self._on_tree_right_click)
         self.tree.bind("<Double-1>", lambda e: self._unbind_selected_slot())
+
+        # 드래그 앤 드롭 바인딩
+        self.tree.bind("<Button-1>", self._drag_start)
+        self.tree.bind("<B1-Motion>", self._drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self._drag_drop)
 
         self._update_monitors()
         self.mon_combo.bind("<<ComboboxSelected>>", self._on_monitor_change)
@@ -756,7 +763,8 @@ class SettingsGUI:
                 else "(비어 있음)"
             )
             locked_icon = "🔒" if slot["locked"] else ""
-            self.tree.insert("", "end", values=(i, title, locked_icon))
+            overlay_icon = "👁" if slot.get("overlay_enabled", True) else "○"
+            self.tree.insert("", "end", values=(i, title, locked_icon, overlay_icon))
 
     def _on_canvas_right_click(self, event):
         tracker = self._get_current_tracker()
@@ -1283,12 +1291,16 @@ class SettingsGUI:
         idx = int(val[0])
         tracker = self._get_current_tracker()
         is_locked = False
+        overlay_enabled = True
         if tracker and idx < len(tracker.slots):
             is_locked = tracker.slots[idx].get("locked", False)
+            overlay_enabled = tracker.slots[idx].get("overlay_enabled", True)
 
         menu = tk.Menu(self.root, tearoff=0)
         lock_label = "고정 해제" if is_locked else "고정"
         menu.add_command(label=lock_label, command=self._toggle_slot_lock)
+        overlay_label = "덮개 끄기" if overlay_enabled else "덮개 켜기"
+        menu.add_command(label=overlay_label, command=self._toggle_overlay)
         menu.add_command(label="이 슬롯 할당 해제", command=self._unbind_selected_slot)
         menu.post(event.x_root, event.y_root)
 
@@ -1308,6 +1320,25 @@ class SettingsGUI:
             tracker.toggle_slot_lock(idx)
             locked = tracker.slots[idx].get("locked", False)
             status = "고정됨" if locked else "고정 해제됨"
+            self.set_status(f"● 슬롯 {idx} {status}", "info")
+            self.update_ui()
+
+    def _toggle_overlay(self):
+        """선택된 슬롯의 덮개(overlay) 표시 토글"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+
+        val = self.tree.item(sel[0], "values")
+        if not val:
+            return
+
+        idx = int(val[0])
+        tracker = self._get_current_tracker()
+        if tracker and idx < len(tracker.slots):
+            tracker.toggle_overlay(idx)
+            overlay_enabled = tracker.slots[idx].get("overlay_enabled", True)
+            status = "덮개 켜짐" if overlay_enabled else "덮개 꺼짐"
             self.set_status(f"● 슬롯 {idx} {status}", "info")
             self.update_ui()
 
@@ -1363,3 +1394,59 @@ class SettingsGUI:
     def _show_window_selector(self):
         """창 목록 선택 다이얼로그 열기 (Cycle 15)"""
         WindowSelector(self.root, self.tracker, self.update_ui, self.set_status)
+
+    def _drag_start(self, event):
+        """드래그 시작 - 선택된 항목 기억"""
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        self._drag_source = item
+        self.tree.selection_set(item)
+
+    def _drag_motion(self, event):
+        """드래그 중 - 대상 항목 강조"""
+        if not hasattr(self, "_drag_source"):
+            return
+        target = self.tree.identify_row(event.y)
+        if target and target != self._drag_source:
+            self.tree.selection_set(target)
+
+    def _drag_drop(self, event):
+        """드롭 시 슬롯 스왑"""
+        if not hasattr(self, "_drag_source"):
+            return
+
+        target = self.tree.identify_row(event.y)
+        if not target or target == self._drag_source:
+            self._drag_source = None
+            return
+
+        src_vals = self.tree.item(self._drag_source, "values")
+        dst_vals = self.tree.item(target, "values")
+
+        if not src_vals or not dst_vals:
+            self._drag_source = None
+            return
+
+        src_idx = int(src_vals[0])
+        dst_idx = int(dst_vals[0])
+
+        tracker = self._get_current_tracker()
+        if (
+            tracker
+            and 0 <= src_idx < len(tracker.slots)
+            and 0 <= dst_idx < len(tracker.slots)
+        ):
+            result = tracker.swap_slots(src_idx, dst_idx)
+            if result:
+                self.set_status(f"● 슬롯 {src_idx} ↔ {dst_idx} 스왑됨", "info")
+            else:
+                src_locked = tracker.slots[src_idx].get("locked", False)
+                dst_locked = tracker.slots[dst_idx].get("locked", False)
+                src_overlay = tracker.slots[src_idx].get("overlay_enabled", True)
+                dst_overlay = tracker.slots[dst_idx].get("overlay_enabled", True)
+                if src_locked or dst_locked or not src_overlay or not dst_overlay:
+                    self.set_status("● 보호된 슬롯은 스왑 불가", "warn")
+            self.update_ui()
+
+        self._drag_source = None

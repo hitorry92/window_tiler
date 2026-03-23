@@ -114,7 +114,9 @@ class WindowTilerApp:
         self.gui.show()
 
         # OverlayManager 초기화 및 연동
-        self.overlay_manager = OverlayManager(self.gui.root, self.tracker.swap_to_main)
+        self.overlay_manager = OverlayManager(
+            self.gui.root, self.tracker.swap_to_main, self.tracker
+        )
         self.tracker.set_overlay_manager(self.overlay_manager)
         self.tracker.refresh_overlays()
 

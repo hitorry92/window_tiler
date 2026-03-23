@@ -55,8 +55,12 @@ class WindowTracker:
                 for i, slot in enumerate(list(self.slots)):  # 복사본 순회
                     if slot["hwnd"] and not win32gui.IsWindow(slot["hwnd"]):
                         # 고정된 슬롯은 창만 비우고, 고정되지 않은 슬롯은 전체를 초기화
-                        if not slot["locked"]:
-                            self.slots[i] = {"hwnd": None, "locked": False}
+                        if not slot.get("locked"):
+                            self.slots[i] = {
+                                "hwnd": None,
+                                "locked": False,
+                                "overlay_enabled": slot.get("overlay_enabled", True),
+                            }
                         else:
                             self.slots[i]["hwnd"] = None
                         needs_ui_update = True
@@ -66,6 +70,14 @@ class WindowTracker:
 
     def set_overlay_manager(self, manager):
         self.overlay_manager = manager
+
+    def _remove_overlay(self, index):
+        if self.overlay_manager and index in self.overlay_manager.overlays:
+            try:
+                self.overlay_manager.overlays[index].destroy()
+                del self.overlay_manager.overlays[index]
+            except:
+                pass
 
     def refresh_overlays(self):
         if not self.overlay_manager:
@@ -78,19 +90,31 @@ class WindowTracker:
         main_idx = self.monitor_config.get("main_slot_index", 0)
         active_slots = []
         for i, slot in enumerate(self.slots):
-            if i != main_idx and slot["hwnd"] and win32gui.IsWindow(slot["hwnd"]):
+            if (
+                i != main_idx
+                and slot.get("hwnd")
+                and win32gui.IsWindow(slot["hwnd"])
+                and slot.get("overlay_enabled", True)
+            ):
                 active_slots.append((i, self.slot_rects[i]["rect"], slot["hwnd"]))
         self.overlay_manager.update_overlays(active_slots)
 
     def swap_slots(self, index1, index2):
         with self.lock:
-            if self.slots[index1]["locked"] or self.slots[index2]["locked"]:
-                return False  # 고정된 슬롯은 스왑 불가
+            slot1 = self.slots[index1]
+            slot2 = self.slots[index2]
 
-            self.slots[index1], self.slots[index2] = (
-                self.slots[index2],
-                self.slots[index1],
-            )
+            # 고정된 슬롯은 덮개와 관계없이 스왑 불가
+            if slot1.get("locked") or slot2.get("locked"):
+                return False
+
+            # 덮개가 꺼진 슬롯도 스왑 불가 (고정과 동일하게 보호)
+            if not slot1.get("overlay_enabled", True) or not slot2.get(
+                "overlay_enabled", True
+            ):
+                return False
+
+            self.slots[index1], self.slots[index2] = slot2, slot1
             self.reposition_all()
             if self.ui_update_callback:
                 self.ui_update_callback()
@@ -98,7 +122,30 @@ class WindowTracker:
 
     def toggle_slot_lock(self, index):
         with self.lock:
-            self.slots[index]["locked"] = not self.slots[index]["locked"]
+            self.slots[index]["locked"] = not self.slots[index].get("locked", False)
+            if self.ui_update_callback:
+                self.ui_update_callback()
+
+    def toggle_overlay(self, index):
+        with self.lock:
+            current = self.slots[index].get("overlay_enabled", True)
+            self.slots[index]["overlay_enabled"] = not current
+
+            # 덮개를 끄면 즉시 오버레이 제거
+            if (
+                not self.slots[index].get(
+                    "overlay_enabled", True
+                )  # 새 값이 꺼짐인지 확인
+                and self.overlay_manager
+                and index in self.overlay_manager.overlays
+            ):
+                try:
+                    self.overlay_manager.overlays[index].destroy()
+                    del self.overlay_manager.overlays[index]
+                except:
+                    pass
+
+            self.refresh_overlays()
             if self.ui_update_callback:
                 self.ui_update_callback()
 
@@ -110,8 +157,10 @@ class WindowTracker:
             if main_idx >= len(self.slots):
                 main_idx = 0
 
-            # 고정된 슬롯과는 스왑하지 않음
-            if self.slots[main_idx]["locked"] or self.slots[target_idx]["locked"]:
+            # 고정된 슬롯과는 스왑하지 않음 (덮개와 상관없이)
+            main_locked = self.slots[main_idx].get("locked", False)
+            target_locked = self.slots[target_idx].get("locked", False)
+            if main_locked or target_locked:
                 return
 
             if main_idx == target_idx:
@@ -122,6 +171,8 @@ class WindowTracker:
                 self.slots[main_idx],
             )
             self.reposition_all()
+            if self.ui_update_callback:
+                self.ui_update_callback()
 
     def update_layout(self):
         with self.lock:
@@ -150,7 +201,9 @@ class WindowTracker:
             # 슬롯 데이터 구조 상태 동기화
             num_slots = len(self.slot_rects)
             while len(self.slots) < num_slots:
-                self.slots.append({"hwnd": None, "locked": False})
+                self.slots.append(
+                    {"hwnd": None, "locked": False, "overlay_enabled": True}
+                )
             self.slots = self.slots[:num_slots]
 
     def _calculate_slots(self, x, y, w, h, h_splits, v_splits, merges=None, gap=0):
@@ -268,6 +321,14 @@ class WindowTracker:
             # 기존 메인 창
             old_main = self.slots[main_idx]["hwnd"]
 
+            # 메인 슬롯이 고정되어 있으면 스왑 불가
+            if self.slots[main_idx].get("locked"):
+                return
+
+            # 기존 창이 있는 슬롯이 고정되어 있으면 스왑 불가
+            if old_idx != -1 and self.slots[old_idx].get("locked"):
+                return
+
             # 스왑
             self.slots[main_idx]["hwnd"] = hwnd
             if old_idx != -1:
@@ -309,7 +370,10 @@ class WindowTracker:
 
             # 2. 순서에 따라 창 배정 (고정된 슬롯은 보호)
             if not self.slots:
-                self.slots = [{"hwnd": None, "locked": False} for _ in range(num_slots)]
+                self.slots = [
+                    {"hwnd": None, "locked": False, "overlay_enabled": True}
+                    for _ in range(num_slots)
+                ]
             else:
                 for s in self.slots:
                     if not s.get("locked", False):

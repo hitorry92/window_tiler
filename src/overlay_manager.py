@@ -10,9 +10,10 @@ class OverlayManager:
     창 내부 클릭/드래그 오작동을 방지하고 슬롯 클릭 이벤트를 가로채는 매니저.
     """
 
-    def __init__(self, root, on_click_callback):
+    def __init__(self, root, on_click_callback, tracker):
         self.root = root
         self.on_click_callback = on_click_callback
+        self.tracker = tracker
         self.overlays = {}  # slot_index -> tk.Toplevel
 
     def update_overlays(self, active_slots_with_hwnd):
@@ -63,5 +64,7 @@ class OverlayManager:
                 del self.overlays[idx]
 
     def _on_click(self, idx):
-        # 덮개가 클릭되면 타일링 엔진의 교체 콜백 호출
+        slot = self.tracker.slots[idx]
+        if slot.get("locked", False):
+            return
         self.on_click_callback(idx)
