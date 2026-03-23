@@ -43,8 +43,8 @@ Desktop.ini
 # 7. 로그 파일
 *.log
 
+
 # 8. OpenCode 시스템 및 에이전트 문서
+.opencode/
+opencode.json
 AGENTS.md
-.opencode/guides/
-.opencode/templates/artifact_templates/
-.opencode/workflows/
