@@ -9,6 +9,7 @@ from .win_utils import get_window_list
 from .app_config import save_config, save_profiles, load_profiles
 from .gui.theme import THEME, setup_styles
 from .gui.window_selector import WindowSelector
+from .gui.slot_tree import SlotTreeView
 
 
 class SettingsGUI:
@@ -277,39 +278,7 @@ class SettingsGUI:
             foreground=THEME["text_dim"],
         ).pack(anchor="w", pady=(0, 10))
 
-        tree_container = ttk.Frame(laps_frame, style="Container.TFrame")
-        tree_container.pack(fill="both", expand=True)
-
-        self.tree = ttk.Treeview(
-            tree_container,
-            columns=("index", "title", "locked", "overlay"),
-            show="headings",
-            height=15,
-        )
-        self.tree.heading("index", text="슬롯")
-        self.tree.heading("title", text="창 제목")
-        self.tree.heading("locked", text="고정")
-        self.tree.heading("overlay", text="덮개")
-        self.tree.column("index", width=50, anchor="center")
-        self.tree.column("title", width=280)
-        self.tree.column("locked", width=60, anchor="center")
-        self.tree.column("overlay", width=60, anchor="center")
-
-        tree_sc = ttk.Scrollbar(
-            tree_container, orient="vertical", command=self.tree.yview
-        )
-        self.tree.configure(yscrollcommand=tree_sc.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        tree_sc.pack(side="right", fill="y")
-
-        self._locked_vars = {}
-        self._overlay_vars = {}
-
-        self.tree.bind("<Button-3>", self._on_tree_right_click)
-        self.tree.bind("<Button-1>", self._drag_start)
-        self.tree.bind("<B1-Motion>", self._drag_motion)
-        self.tree.bind("<ButtonRelease-1>", self._drag_drop)
-        self.tree.bind("<Double-1>", self._on_tree_double_click)
+        self.slot_tree = SlotTreeView(laps_frame, self.tracker, self.update_ui)
 
         self._update_monitors()
         self.mon_combo.bind("<<ComboboxSelected>>", self._on_monitor_change)
@@ -761,20 +730,7 @@ class SettingsGUI:
             )
 
         self._update_numerical_inputs()
-        self.tree.delete(*self.tree.get_children())
-
-        for i, slot in enumerate(tracker.slots):
-            hwnd = slot["hwnd"]
-            title = (
-                win32gui.GetWindowText(hwnd)
-                if hwnd and win32gui.IsWindow(hwnd)
-                else "(비어 있음)"
-            )
-            locked_icon = "🔒" if slot.get("locked") else "☐"
-            overlay_icon = "👁" if slot.get("overlay_enabled", True) else "○"
-            self.tree.insert(
-                "", "end", iid=str(i), values=(i, title, locked_icon, overlay_icon)
-            )
+        self.slot_tree.update()
 
     def _on_canvas_right_click(self, event):
         tracker = self._get_current_tracker()
@@ -1289,41 +1245,14 @@ class SettingsGUI:
             self.root.quit()
             self.root.destroy()
 
-    def _on_tree_right_click(self, event):
-        """관리 현황 리스트 우클릭 메뉴 (Cycle 15)"""
-        item = self.tree.identify_row(event.y)
-        if not item:
-            return
-        self.tree.selection_set(item)
-
-        sel = self.tree.selection()
-        val = self.tree.item(sel[0], "values")
-        idx = int(val[0])
-        tracker = self._get_current_tracker()
-        is_locked = False
-        overlay_enabled = True
-        if tracker and idx < len(tracker.slots):
-            is_locked = tracker.slots[idx].get("locked", False)
-            overlay_enabled = tracker.slots[idx].get("overlay_enabled", True)
-
-        menu = tk.Menu(self.root, tearoff=0)
-        lock_label = "고정 해제" if is_locked else "고정"
-        menu.add_command(label=lock_label, command=self._toggle_slot_lock)
-        overlay_label = "덮개 끄기" if overlay_enabled else "덮개 켜기"
-        menu.add_command(label=overlay_label, command=self._toggle_overlay)
-        menu.add_command(label="이 슬롯 할당 해제", command=self._unbind_selected_slot)
-        menu.post(event.x_root, event.y_root)
-
     def _toggle_slot_lock(self):
         """선택된 슬롯의 고정 상태 토글"""
-        sel = self.tree.selection()
+        sel = self.slot_tree.tree.selection()
         if not sel:
             return
-
-        val = self.tree.item(sel[0], "values")
+        val = self.slot_tree.tree.item(sel[0], "values")
         if not val:
             return
-
         idx = int(val[0])
         tracker = self._get_current_tracker()
         if tracker and idx < len(tracker.slots):
@@ -1335,14 +1264,12 @@ class SettingsGUI:
 
     def _toggle_overlay(self):
         """선택된 슬롯의 덮개(overlay) 표시 토글"""
-        sel = self.tree.selection()
+        sel = self.slot_tree.tree.selection()
         if not sel:
             return
-
-        val = self.tree.item(sel[0], "values")
+        val = self.slot_tree.tree.item(sel[0], "values")
         if not val:
             return
-
         idx = int(val[0])
         tracker = self._get_current_tracker()
         if tracker and idx < len(tracker.slots):
@@ -1353,16 +1280,13 @@ class SettingsGUI:
             self.update_ui()
 
     def _unbind_selected_slot(self):
-        """선택된 슬롯의 창 할당 해제 (Cycle 15)"""
-        sel = self.tree.selection()
+        """선택된 슬롯의 창 할당 해제"""
+        sel = self.slot_tree.tree.selection()
         if not sel:
             return
-
-        # 첫 번째 열(번호)이 슬롯 인덱스
-        val = self.tree.item(sel[0], "values")
+        val = self.slot_tree.tree.item(sel[0], "values")
         if not val:
             return
-
         idx = int(val[0])
         tracker = self._get_current_tracker()
         if tracker and idx < len(tracker.slots):
@@ -1409,103 +1333,5 @@ class SettingsGUI:
         messagebox.showinfo("Window Tiler 사용 방법", help_text)
 
     def _show_window_selector(self):
-        """창 목록 선택 다이얼로그 열기 (Cycle 15)"""
+        """창 목록 선택 다이얼로그 열기"""
         WindowSelector(self.root, self.tracker, self.update_ui, self.set_status)
-
-    def _drag_start(self, event):
-        """드래그 시작 - 선택된 항목 기억"""
-        item = self.tree.identify_row(event.y)
-        if not item:
-            return
-        self._drag_source = item
-        self.tree.selection_set(item)
-
-    def _drag_motion(self, event):
-        """드래그 중 - 대상 항목 강조"""
-        if not hasattr(self, "_drag_source"):
-            return
-        target = self.tree.identify_row(event.y)
-        if target and target != self._drag_source:
-            self.tree.selection_set(target)
-
-    def _drag_drop(self, event):
-        """드롭 시 슬롯 스왑"""
-        if not hasattr(self, "_drag_source"):
-            return
-
-        target = self.tree.identify_row(event.y)
-        if not target or target == self._drag_source:
-            self._drag_source = None
-            return
-
-        src_vals = self.tree.item(self._drag_source, "values")
-        dst_vals = self.tree.item(target, "values")
-
-        if not src_vals or not dst_vals:
-            self._drag_source = None
-            return
-
-        src_idx = int(src_vals[0])
-        dst_idx = int(dst_vals[0])
-
-        tracker = self._get_current_tracker()
-        if (
-            tracker
-            and 0 <= src_idx < len(tracker.slots)
-            and 0 <= dst_idx < len(tracker.slots)
-        ):
-            result = tracker.swap_slots(src_idx, dst_idx)
-            if result:
-                self.set_status(f"● 슬롯 {src_idx} ↔ {dst_idx} 스왑됨", "info")
-            else:
-                src_locked = tracker.slots[src_idx].get("locked", False)
-                dst_locked = tracker.slots[dst_idx].get("locked", False)
-                src_overlay = tracker.slots[src_idx].get("overlay_enabled", True)
-                dst_overlay = tracker.slots[dst_idx].get("overlay_enabled", True)
-                if src_locked or dst_locked or not src_overlay or not dst_overlay:
-                    self.set_status("● 보호된 슬롯은 스왑 불가", "warn")
-            self.update_ui()
-
-        self._drag_source = None
-
-    def _on_locked_toggle(self, idx, var):
-        tracker = self._get_current_tracker()
-        if tracker and idx < len(tracker.slots):
-            tracker.slots[idx]["locked"] = var.get()
-            self.set_status(
-                f"● 슬롯 {idx} {'고정됨' if var.get() else '고정 해제됨'}", "info"
-            )
-
-    def _on_overlay_toggle(self, idx, var):
-        tracker = self._get_current_tracker()
-        if tracker and idx < len(tracker.slots):
-            tracker.toggle_overlay(idx)
-
-    def _on_tree_double_click(self, event):
-        region = self.tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-
-        item_id = self.tree.identify_row(event.y)
-        if not item_id:
-            return
-
-        column = self.tree.identify_column(event.x)
-        if not column:
-            return
-
-        col_idx = int(column.replace("#", ""))
-        if col_idx not in (3, 4):
-            return
-
-        idx = int(item_id)
-        tracker = self._get_current_tracker()
-        if not tracker or idx >= len(tracker.slots):
-            return
-
-        if col_idx == 3:
-            tracker.toggle_slot_lock(idx)
-        elif col_idx == 4:
-            tracker.toggle_overlay(idx)
-
-        self.update_ui()
