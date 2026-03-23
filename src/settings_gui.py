@@ -2,6 +2,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, Listbox, Scrollbar, MULTIPLE
 import win32gui
+import win32api
+import win32con
 from .win_utils import get_all_monitors, get_window_list, move_window_precision
 from .win_utils import get_window_list
 from .app_config import save_config, save_profiles
@@ -147,9 +149,13 @@ class SettingsGUI:
             side="left", padx=(10, 0)
         )
         self.hotkey_var = tk.StringVar(value=self.config.get("hotkey", "Ctrl+Shift+T"))
-        hotkey_e = ttk.Entry(split_btn_p, textvariable=self.hotkey_var, width=12)
-        hotkey_e.pack(side="left", padx=5)
-        hotkey_e.bind("<Return>", lambda e: self._on_hotkey_change())
+        self.hotkey_entry = ttk.Entry(
+            split_btn_p, textvariable=self.hotkey_var, width=12, state="readonly"
+        )
+        self.hotkey_entry.pack(side="left", padx=5)
+        self.hotkey_entry.bind("<Button-1>", self._start_hotkey_capture)
+        self.hotkey_entry.bind("<Return>", lambda e: self._on_hotkey_change())
+        self._capturing_hotkey = False
 
         ttk.Button(split_btn_p, text="+ 세로 분할", command=self._add_v_split).pack(
             side="right", padx=2
@@ -961,6 +967,126 @@ class SettingsGUI:
                 messagebox.showerror(
                     "단축키 등록 오류", f"입력한 단축키 등록에 실패했습니다:\n{e}"
                 )
+
+    def _start_hotkey_capture(self, event):
+        """키 입력 캡처 모드 시작"""
+        if self._capturing_hotkey:
+            return
+
+        self._capturing_hotkey = True
+        self.hotkey_var.set("키를 눌러주세요...")
+        self.hotkey_entry.config(state="normal")
+        self.hotkey_entry.delete(0, tk.END)
+        self.hotkey_entry.focus_set()
+
+        # 키 이벤트 바인딩
+        self.hotkey_entry.bind("<KeyPress>", self._on_key_press)
+        self.hotkey_entry.bind("<KeyRelease>", self._on_key_release)
+
+        # 캡처 상태 표시
+        self.set_status("● 단축키 입력 대기 중...", "info")
+
+    def _on_key_press(self, event):
+        """키 입력 처리"""
+        if not self._capturing_hotkey:
+            return
+
+        # 특수 키 처리
+        key_symbols = {
+            "Control_L": "Ctrl",
+            "Control_R": "Ctrl",
+            "Shift_L": "Shift",
+            "Shift_R": "Shift",
+            "Alt_L": "Alt",
+            "Alt_R": "Alt",
+            "Win_L": "Win",
+            "Win_R": "Win",
+            "Return": "Enter",
+            "Escape": "Esc",
+            "space": "Space",
+            "Tab": "Tab",
+            "BackSpace": "Backspace",
+            "Delete": "Delete",
+            "Insert": "Insert",
+            "Home": "Home",
+            "End": "End",
+            "Prior": "PageUp",
+            "Next": "PageDown",
+            "Left": "Left",
+            "Right": "Right",
+            "Up": "Up",
+            "Down": "Down",
+        }
+
+        keysym = event.keysym
+        if keysym in key_symbols:
+            key_name = key_symbols[keysym]
+        elif len(keysym) == 1:
+            key_name = keysym.upper()
+        else:
+            key_name = keysym
+
+        # 수정키만 눌렀을 때는 표시하지 않음
+        modifier_keys = {"Ctrl", "Shift", "Alt", "Win"}
+        if key_name in modifier_keys and not any(
+            k in self.hotkey_var.get() for k in modifier_keys if k != key_name
+        ):
+            # 첫 번째 수정키인 경우만 표시
+            current = self.hotkey_var.get()
+            if current == "키를 눌러주세요...":
+                self.hotkey_var.set(key_name)
+            elif key_name not in current:
+                self.hotkey_var.set(f"{current}+{key_name}")
+        elif key_name not in modifier_keys:
+            # 일반 키인 경우
+            current = self.hotkey_var.get()
+            if current == "키를 눌러주세요...":
+                self.hotkey_var.set(key_name)
+            else:
+                # 기존 수정키 제거하고 새로운 키만 표시
+                mods = [k for k in current.split("+") if k in modifier_keys]
+                if mods:
+                    self.hotkey_var.set(f"{'+'.join(mods)}+{key_name}")
+                else:
+                    self.hotkey_var.set(key_name)
+
+    def _on_key_release(self, event):
+        """키 릴리스 처리 - 입력 완료"""
+        if not self._capturing_hotkey:
+            return
+
+        # 잠시 후 입력 완료 처리
+        self.root.after(100, self._finish_hotkey_capture)
+
+    def _finish_hotkey_capture(self):
+        """키 입력 캡처 완료"""
+        if not self._capturing_hotkey:
+            return
+
+        self._capturing_hotkey = False
+        hotkey_str = self.hotkey_var.get().strip()
+
+        # 유효성 검사
+        if hotkey_str and hotkey_str != "키를 눌러주세요...":
+            # 자동으로 적용 시도
+            if self.update_hotkey_callback:
+                try:
+                    self.update_hotkey_callback(hotkey_str)
+                    self.set_status(f"● 핫키 '{hotkey_str}' 적용됨", "success")
+                except Exception as e:
+                    messagebox.showerror(
+                        "단축키 등록 오류", f"입력한 단축키 등록에 실패했습니다:\n{e}"
+                    )
+                    self.hotkey_var.set(self.config.get("hotkey", "Ctrl+Shift+T"))
+            else:
+                self.hotkey_var.set(hotkey_str)
+        else:
+            self.hotkey_var.set(self.config.get("hotkey", "Ctrl+Shift+T"))
+
+        self.hotkey_entry.config(state="readonly")
+        # 키 이벤트 바인딩 해제
+        self.hotkey_entry.unbind("<KeyPress>")
+        self.hotkey_entry.unbind("<KeyRelease>")
 
     # Removed unused _toggle_interactive
 
