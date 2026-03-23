@@ -1,0 +1,285 @@
+import threading
+import win32gui
+import time
+import ctypes
+from .win_utils import (
+    get_monitor_info,
+    move_window_precision,
+    is_valid_window,
+    is_window_in_rect,
+)
+
+
+class WindowTracker:
+    def __init__(self, monitor_index, profiles, monitor_config):
+        self.monitor_index = monitor_index
+        self.profiles = profiles
+        self.monitor_config = (
+            monitor_config  # {"profile": "...", "main_slot_index": ...}
+        )
+
+        self.lock = threading.Lock()
+        self.slot_hwnds = []
+        self.slot_rects = []
+        self.monitor_info = None
+        self.is_paused = True  # 시작 시 정기 상태로 시작 (사용자 요청)
+        self.is_assignment_mode = False
+        self.assignment_queue = []  # 순서대로 채울 슬롯 인덱스 리스트
+
+        self.overlay_manager = None
+
+        self.update_layout()
+
+    def set_overlay_manager(self, manager):
+        self.overlay_manager = manager
+
+    def refresh_overlays(self):
+        if not self.overlay_manager:
+            return
+        # 일시 정지 상태이거나 대화형 할당 모드일 때는 오버레이 숨김
+        if self.is_paused or self.is_assignment_mode:
+            self.overlay_manager.update_overlays([])
+            return
+
+        main_idx = self.monitor_config.get("main_slot_index", 0)
+        active_slots = []
+        for i, hwnd in enumerate(self.slot_hwnds):
+            if i != main_idx and hwnd and win32gui.IsWindow(hwnd):
+                active_slots.append((i, self.slot_rects[i]["rect"]))
+        self.overlay_manager.update_overlays(active_slots)
+
+    def swap_to_main(self, target_idx):
+        with self.lock:
+            if target_idx < 0 or target_idx >= len(self.slot_hwnds):
+                return
+            main_idx = self.monitor_config.get("main_slot_index", 0)
+            if main_idx >= len(self.slot_hwnds):
+                main_idx = 0
+
+            if main_idx == target_idx:
+                return
+
+            old_main = self.slot_hwnds[main_idx]
+            self.slot_hwnds[main_idx] = self.slot_hwnds[target_idx]
+            self.slot_hwnds[target_idx] = old_main
+
+            self.reposition_all()
+
+    def update_layout(self):
+        with self.lock:
+            self.monitor_info = get_monitor_info(self.monitor_index)
+            if not self.monitor_info:
+                return
+
+            profile_name = self.monitor_config.get("profile", "기본")
+            # 1순위: 지정 프로필, 2순위: '기본' 프로필, 3순위: 첫 번째 프로필, 4순위: 빈 프로필 (Cycle 15 강화)
+            profile = self.profiles.get(profile_name) or self.profiles.get("기본")
+            if not profile and self.profiles:
+                profile = next(iter(self.profiles.values()))
+            if not profile:
+                profile = {"horizontal": [], "vertical": [], "main_slot_index": 0}
+
+            h_splits = profile.get("horizontal", [])
+            v_splits = profile.get("vertical", [])
+            merges = profile.get("merges", [])
+
+            m = self.monitor_info
+            gap = self.monitor_config.get("gap", 0)
+            self.slot_rects = self._calculate_slots(
+                m["x"], m["y"], m["width"], m["height"], h_splits, v_splits, merges, gap
+            )
+
+            # 슬롯 HWND 상태 동기화
+            num_slots = len(self.slot_rects)
+            while len(self.slot_hwnds) < num_slots:
+                self.slot_hwnds.append(None)
+            self.slot_hwnds = self.slot_hwnds[:num_slots]
+
+    def _calculate_slots(self, x, y, w, h, h_splits, v_splits, merges=None, gap=0):
+        h_points = [0.0] + sorted(h_splits) + [1.0]
+        v_points = [0.0] + sorted(v_splits) + [1.0]
+
+        base_slots = []
+        for i in range(len(h_points) - 1):
+            for j in range(len(v_points) - 1):
+                sx = int(x + v_points[j] * w)
+                sy = int(y + h_points[i] * h)
+                sw = int(v_points[j + 1] * w - v_points[j] * w)
+                sh = int(h_points[i + 1] * h - h_points[i] * h)
+
+                # Gap 마진 적용 (Cycle 15)
+                # (sx+gap, sy+gap, sw-2*gap, sh-2*gap)
+                rect = (sx + gap, sy + gap, max(1, sw - 2 * gap), max(1, sh - 2 * gap))
+                base_slots.append({"rect": rect, "base_indices": [len(base_slots)]})
+
+        if not merges:
+            return base_slots
+
+        # 슬롯 병합 처리
+        merged_map = {}  # 원래 인덱스 -> 그룹 ID
+        for i, group in enumerate(merges):
+            for idx in group:
+                merged_map[idx] = i
+
+        final_slots = []
+        groups_added = set()
+
+        for idx in range(len(base_slots)):
+            if idx in merged_map:
+                gid = merged_map[idx]
+                if gid not in groups_added:
+                    # 그룹 전체를 아우르는 사각형 계산
+                    group = merges[gid]
+                    gx = min(
+                        base_slots[i]["rect"][0] for i in group if i < len(base_slots)
+                    )
+                    gy = min(
+                        base_slots[i]["rect"][1] for i in group if i < len(base_slots)
+                    )
+                    g_right = max(
+                        base_slots[i]["rect"][0] + base_slots[i]["rect"][2] + gap
+                        for i in group
+                        if i < len(base_slots)
+                    )
+                    g_bottom = max(
+                        base_slots[i]["rect"][1] + base_slots[i]["rect"][3] + gap
+                        for i in group
+                        if i < len(base_slots)
+                    )
+                    # 병합된 슬롯은 내부 gap을 무시하고 전체 영역에 다시 gap 적용
+                    final_slots.append(
+                        {
+                            "rect": (gx, gy, g_right - gx, g_bottom - gy),
+                            "base_indices": list(group),
+                        }
+                    )
+                    groups_added.add(gid)
+            else:
+                final_slots.append(base_slots[idx])
+
+        return final_slots
+
+    def on_focus_event(self, hwnd):
+        if self.is_paused and not self.is_assignment_mode:
+            return
+        if not is_valid_window(hwnd):
+            return
+
+        # [NEW] 마우스 왼쪽 버튼(0x01)이 떨어질 때까지 최대 0.5초 대기
+        # MSB(최상위 비트)가 1이면 눌린 상태 (0x8000)
+        timeout = 50
+        while (ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000) and timeout > 0:
+            time.sleep(0.01)
+            timeout -= 1
+
+        # 1. 대화형 할당 모드 처리 (Cycle 15)
+        if self.is_assignment_mode:
+            title = win32gui.GetWindowText(hwnd)
+            if self.handle_assignment(hwnd, title):
+                return
+
+        if self.is_paused:
+            return
+
+        with self.lock:
+            # [NEW] 배정 기록에 없는 창은 무시
+            if hwnd not in self.slot_hwnds:
+                return
+
+            # 해당 창이 현재 모니터 영역 안에 있는지 확인
+            m = self.monitor_info
+            if not is_window_in_rect(hwnd, (m["x"], m["y"], m["width"], m["height"])):
+                return
+
+            # 메인 슬롯 인덱스 확인
+            main_idx = self.monitor_config.get("main_slot_index", 0)
+            if main_idx >= len(self.slot_rects):
+                main_idx = 0
+
+            # 이미 메인 슬롯에 있는 창이면 무시
+            if self.slot_hwnds[main_idx] == hwnd:
+                return
+
+            # 다른 슬롯에 있던 창인지 확인
+            old_idx = -1
+            if hwnd in self.slot_hwnds:
+                old_idx = self.slot_hwnds.index(hwnd)
+
+            # 기존 메인 창
+            old_main = self.slot_hwnds[main_idx]
+
+            # 스왑
+            self.slot_hwnds[main_idx] = hwnd
+            if old_idx != -1:
+                self.slot_hwnds[old_idx] = old_main
+
+            self.reposition_all()
+
+    def reposition_all(self):
+        # 자동 타일링이 pause 상태여도, 명시적 호출 시에는 배치를 수행함
+        for i, hwnd in enumerate(self.slot_hwnds):
+            if hwnd and win32gui.IsWindow(hwnd):
+                rect = self.slot_rects[i]["rect"]
+                move_window_precision(hwnd, *rect)
+        self.refresh_overlays()
+
+    def force_refresh(self):
+        self.update_layout()
+        self.reposition_all()
+
+    def auto_fill_all_slots(self):
+        """현재 열려 있는 상위 창들을 각 슬롯에 자동 배분 (Cycle 15)"""
+        from .win_utils import get_window_list
+
+        # 현재 모니터의 활성 창 목록 가져오기
+        windows = get_window_list(self.monitor_info)
+        # 자신(Window Tiler) 제외
+        targets = [w for w in windows if "Window Tiler" not in w[1]]
+
+        with self.lock:
+            num_slots = len(self.slot_rects)
+            self.slot_hwnds = [None] * num_slots
+            for i in range(min(num_slots, len(targets))):
+                self.slot_hwnds[i] = targets[i][0]
+
+            self.reposition_all()
+            return sum(1 for h in self.slot_hwnds if h)
+
+    def start_assignment_mode(self):
+        """사용자가 클릭하는 순서대로 슬롯에 할당하는 모드 시작 (메인 우선)"""
+        num_slots = len(self.slot_rects)
+        main_idx = self.monitor_config.get("main_slot_index", 0)
+        if main_idx >= num_slots:
+            main_idx = 0
+
+        # 순서: 메인 슬롯 -> 나머지 0번부터 순차
+        queue = [main_idx]
+        for i in range(num_slots):
+            if i != main_idx:
+                queue.append(i)
+
+        with self.lock:
+            self.assignment_queue = queue
+            self.is_assignment_mode = True
+        return num_slots
+
+    def handle_assignment(self, hwnd, title):
+        """포커스된 창을 대기열의 다음 슬롯에 할당"""
+        with self.lock:
+            if not self.is_assignment_mode or not self.assignment_queue:
+                self.is_assignment_mode = False
+                return False
+
+            slot_idx = self.assignment_queue.pop(0)
+
+            # 기존 슬롯들에 해당 HWND가 있다면 제거 (중복 방지)
+            for i in range(len(self.slot_hwnds)):
+                if self.slot_hwnds[i] == hwnd:
+                    self.slot_hwnds[i] = None
+
+            self.slot_hwnds[slot_idx] = hwnd
+            self.reposition_all()
+
+            if not self.assignment_queue:
+                self.is_assignment_mode = False
+            return True
