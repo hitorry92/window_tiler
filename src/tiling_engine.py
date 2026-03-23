@@ -11,14 +11,18 @@ from .win_utils import (
 
 
 class WindowTracker:
-    def __init__(self, monitor_index, profiles, monitor_config):
+    def __init__(
+        self, monitor_index, profiles, monitor_config, ui_update_callback=None
+    ):
         self.monitor_index = monitor_index
         self.profiles = profiles
         self.monitor_config = (
             monitor_config  # {"profile": "...", "main_slot_index": ...}
         )
+        self.ui_update_callback = ui_update_callback
 
         self.lock = threading.Lock()
+        self.stop_event = threading.Event()
         self.slot_hwnds = []
         self.slot_rects = []
         self.monitor_info = None
@@ -28,7 +32,31 @@ class WindowTracker:
 
         self.overlay_manager = None
 
+        self.check_thread = None
+
         self.update_layout()
+
+    def start(self):
+        self.stop_event.clear()
+        self.check_thread = threading.Thread(target=self._periodic_check, daemon=True)
+        self.check_thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self.check_thread:
+            self.check_thread.join()
+
+    def _periodic_check(self):
+        while not self.stop_event.wait(2):  # 2초마다 체크
+            needs_ui_update = False
+            with self.lock:
+                for i, hwnd in enumerate(self.slot_hwnds):
+                    if hwnd and not win32gui.IsWindow(hwnd):
+                        self.slot_hwnds[i] = None
+                        needs_ui_update = True
+
+            if needs_ui_update and self.ui_update_callback:
+                self.ui_update_callback()
 
     def set_overlay_manager(self, manager):
         self.overlay_manager = manager

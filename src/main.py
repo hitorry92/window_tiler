@@ -37,7 +37,12 @@ class WindowTilerApp:
 
         # 단입 트래커 생성
         mon_idx = self.config.get("monitor_index", 0)
-        self.tracker = WindowTracker(mon_idx, self.profiles, self.config)
+        self.tracker = WindowTracker(
+            mon_idx,
+            self.profiles,
+            self.config,
+            ui_update_callback=lambda: self.gui.root.after(0, self.gui.update_ui),
+        )
 
         self.paused_event = threading.Event()
         self.paused_event.set()  # 초기 상태: 정지
@@ -91,13 +96,15 @@ class WindowTilerApp:
 
     def on_quit(self, icon, item):
         self.tray.stop()
+        self.tracker.stop()  # 주기적 체크 스레드 중지
         self.gui.quit()
         sys.exit(0)
 
     def run(self):
+        self.tracker.start()  # 주기적 체크 스레드 시작
         self.focus_monitor.start()
         self.hotkey.start()
-        self.tray.start()  # 트레이 아이콘 시작 누락 수정
+        self.tray.start()
         self.gui.show()  # root 초기화 및 UI 생성
 
         # OverlayManager 초기화 및 연동
