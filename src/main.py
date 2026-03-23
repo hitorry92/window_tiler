@@ -1,6 +1,9 @@
+# -*- coding: utf-8 -*-
 import sys
 import threading
 import ctypes
+import traceback
+from threading import Event
 from .app_config import load_config, load_profiles, save_config
 from .win_utils import get_all_monitors
 from .tiling_engine import WindowTracker
@@ -12,12 +15,19 @@ from .overlay_manager import OverlayManager
 
 # 프로세스 DPI 인식 설정 (고해상도 모니터 대응)
 try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
-except Exception:
+    # Per-Monitor V2가 가장 높은 수준의 DPI 인식을 제공
+    ctypes.windll.shcore.SetProcessDpiAwarenessContext(
+        -4
+    )  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+except (AttributeError, TypeError):
+    # 구형 Windows와의 호환성을 위해 대체 방법 시도
     try:
-        ctypes.windll.user32.SetProcessDPIAware()
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
     except Exception:
-        pass
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 
 class WindowTilerApp:
@@ -99,9 +109,11 @@ class WindowTilerApp:
 
 
 def main():
+    """메인 실행 함수"""
     app = WindowTilerApp()
     app.run()
 
 
 if __name__ == "__main__":
+    # main() -> if __name__ == "__main__" 블록으로 이동
     main()

@@ -94,12 +94,12 @@ class SettingsGUI:
         ttk.Button(cfg_frame, text="+", width=2, command=self._add_profile).pack(
             side="left", padx=1
         )
-        ttk.Button(cfg_frame, text="삭제", width=4, command=self._delete_profile).pack(
-            side="left", padx=1
-        )
         ttk.Button(
             cfg_frame, text="저장", width=4, command=self._save_current_profile
         ).pack(side="left", padx=1)
+        ttk.Button(cfg_frame, text="삭제", width=4, command=self._delete_profile).pack(
+            side="left", padx=1
+        )
 
         self.status_label = tk.Label(
             cfg_frame,
@@ -493,46 +493,12 @@ class SettingsGUI:
 
     def _on_canvas_release(self, event):
         if self.dragging_split:
-            # save_profiles(self.profiles) -> 제거
             self.dragging_split = None
             tracker = self._get_current_tracker()
             if tracker:
                 tracker.reposition_all()
-            self.profile_modified = True
-            self._update_profile_combo_display()
-
-    def _reset_splits(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p["horizontal"] = []
-        p["vertical"] = [0.33, 0.67]
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
         self.profile_modified = True
         self._update_profile_combo_display()
-
-    def _on_manual_split_change(self, stype, index, entry_var):
-        try:
-            val = float(entry_var.get())
-            if 0 < val < 1:
-                cfg = self._get_mon_cfg()
-                p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-                if stype == "v":
-                    p["vertical"][index] = val
-                    p["vertical"].sort()
-                else:
-                    p["horizontal"][index] = val
-                    p["horizontal"].sort()
-                tracker = self._get_current_tracker()
-                if tracker:
-                    tracker.update_layout()
-                    tracker.reposition_all()
-                self.update_ui()
-                # save_profiles(self.profiles) -> 제거
-            self.profile_modified = True
-            self._update_profile_combo_display()
 
     def _add_v_split(self):
         cfg = self._get_mon_cfg()
@@ -558,6 +524,97 @@ class SettingsGUI:
         self.profile_modified = True
         self._update_profile_combo_display()
 
+    def _reset_splits(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p["horizontal"] = []
+        p["vertical"] = [0.33, 0.67]
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _add_v_split(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p.setdefault("vertical", []).append(0.5)
+        p["vertical"].sort()
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _add_h_split(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p.setdefault("horizontal", []).append(0.5)
+        p["horizontal"].sort()
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _reset_splits(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p["horizontal"] = []
+        p["vertical"] = [0.33, 0.67]
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _reset_splits(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p["horizontal"] = []
+        p["vertical"] = [0.33, 0.67]
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _add_h_split(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p.setdefault("horizontal", []).append(0.5)
+        p["horizontal"].sort()
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _on_manual_split_change(self, stype, index, entry_var):
+        try:
+            val = float(entry_var.get())
+            if 0 < val < 1:
+                cfg = self._get_mon_cfg()
+                p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+                if stype == "v":
+                    p["vertical"][index] = val
+                    p["vertical"].sort()
+                else:
+                    p["horizontal"][index] = val
+                    p["horizontal"].sort()
+                tracker = self._get_current_tracker()
+                if tracker:
+                    tracker.update_layout()
+                    tracker.reposition_all()
+                self.update_ui()
+            self.profile_modified = True
+            self._update_profile_combo_display()
         except ValueError:
             pass
 
@@ -839,8 +896,25 @@ class SettingsGUI:
             # save_profiles(self.profiles) -> 제거
             self.tracker.update_layout()
             self.update_ui()
-            self.profile_modified = True
-            self._update_profile_combo_display()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _remove_split(self, stype, index):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        if stype == "v":
+            if index < len(p["vertical"]):
+                del p["vertical"][index]
+        else:
+            if index < len(p["horizontal"]):
+                del p["horizontal"][index]
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+            tracker.reposition_all()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
 
     def _unmerge_slot(self, slot_idx):
         tracker = self._get_current_tracker()
@@ -854,7 +928,6 @@ class SettingsGUI:
         # 이 슬롯의 베이스 인덱스들을 포함하는 모든 머지 그룹 삭제
         p["merges"] = [g for g in merges if not any(idx in base_indices for idx in g)]
 
-        # save_profiles(self.profiles) -> 제거
         self.tracker.update_layout()
         self.update_ui()
         self.profile_modified = True
@@ -864,7 +937,6 @@ class SettingsGUI:
         cfg = self._get_mon_cfg()
         p = self.profiles.get(cfg["profile"], self.profiles["기본"])
         p["merges"] = []
-        # save_profiles(self.profiles) -> 제거
         self.tracker.update_layout()
         self.update_ui()
         self.profile_modified = True
