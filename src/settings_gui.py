@@ -46,6 +46,12 @@ class SettingsGUI:
         self.dragging_split = None
         self.hover_split = None
 
+        # Checkbox State
+        self._checkbox_frame = None
+        self._locked_vars = {}
+        self._overlay_vars = {}
+        self._checkbox_rows = {}
+
         # UI Styles
         self.style = None
 
@@ -285,9 +291,9 @@ class SettingsGUI:
         self.tree.heading("locked", text="고정")
         self.tree.heading("overlay", text="덮개")
         self.tree.column("index", width=50, anchor="center")
-        self.tree.column("title", width=320)
-        self.tree.column("locked", width=50, anchor="center")
-        self.tree.column("overlay", width=50, anchor="center")
+        self.tree.column("title", width=280)
+        self.tree.column("locked", width=60, anchor="center")
+        self.tree.column("overlay", width=60, anchor="center")
 
         tree_sc = ttk.Scrollbar(
             tree_container, orient="vertical", command=self.tree.yview
@@ -296,13 +302,14 @@ class SettingsGUI:
         self.tree.pack(side="left", fill="both", expand=True)
         tree_sc.pack(side="right", fill="y")
 
-        self.tree.bind("<Button-3>", self._on_tree_right_click)
-        self.tree.bind("<Double-1>", lambda e: self._unbind_selected_slot())
+        self._locked_vars = {}
+        self._overlay_vars = {}
 
-        # 드래그 앤 드롭 바인딩
+        self.tree.bind("<Button-3>", self._on_tree_right_click)
         self.tree.bind("<Button-1>", self._drag_start)
         self.tree.bind("<B1-Motion>", self._drag_motion)
         self.tree.bind("<ButtonRelease-1>", self._drag_drop)
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
 
         self._update_monitors()
         self.mon_combo.bind("<<ComboboxSelected>>", self._on_monitor_change)
@@ -755,6 +762,7 @@ class SettingsGUI:
 
         self._update_numerical_inputs()
         self.tree.delete(*self.tree.get_children())
+
         for i, slot in enumerate(tracker.slots):
             hwnd = slot["hwnd"]
             title = (
@@ -762,9 +770,11 @@ class SettingsGUI:
                 if hwnd and win32gui.IsWindow(hwnd)
                 else "(비어 있음)"
             )
-            locked_icon = "🔒" if slot["locked"] else ""
+            locked_icon = "🔒" if slot.get("locked") else "☐"
             overlay_icon = "👁" if slot.get("overlay_enabled", True) else "○"
-            self.tree.insert("", "end", values=(i, title, locked_icon, overlay_icon))
+            self.tree.insert(
+                "", "end", iid=str(i), values=(i, title, locked_icon, overlay_icon)
+            )
 
     def _on_canvas_right_click(self, event):
         tracker = self._get_current_tracker()
@@ -1450,3 +1460,45 @@ class SettingsGUI:
             self.update_ui()
 
         self._drag_source = None
+
+    def _on_locked_toggle(self, idx, var):
+        tracker = self._get_current_tracker()
+        if tracker and idx < len(tracker.slots):
+            tracker.slots[idx]["locked"] = var.get()
+            self.set_status(
+                f"● 슬롯 {idx} {'고정됨' if var.get() else '고정 해제됨'}", "info"
+            )
+
+    def _on_overlay_toggle(self, idx, var):
+        tracker = self._get_current_tracker()
+        if tracker and idx < len(tracker.slots):
+            tracker.toggle_overlay(idx)
+
+    def _on_tree_double_click(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+
+        item_id = self.tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        column = self.tree.identify_column(event.x)
+        if not column:
+            return
+
+        col_idx = int(column.replace("#", ""))
+        if col_idx not in (3, 4):
+            return
+
+        idx = int(item_id)
+        tracker = self._get_current_tracker()
+        if not tracker or idx >= len(tracker.slots):
+            return
+
+        if col_idx == 3:
+            tracker.toggle_slot_lock(idx)
+        elif col_idx == 4:
+            tracker.toggle_overlay(idx)
+
+        self.update_ui()
