@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
+import win32gui
+import win32con
 
 
 class OverlayManager:
@@ -13,46 +15,38 @@ class OverlayManager:
         self.on_click_callback = on_click_callback
         self.overlays = {}  # slot_index -> tk.Toplevel
 
-    def update_overlays(self, active_slots):
+    def update_overlays(self, active_slots_with_hwnd):
         """
         엔진의 백그라운드 스레드에서 호출되어,
         GUI 메인 스레드 안전하게 오버레이 상태를 동기화하도록 지시합니다.
-        active_slots: [(idx, (x, y, w, h)), ...] 형태의 리스트
+        active_slots_with_hwnd: [(idx, (x, y, w, h), target_hwnd), ...] 형태의 리스트
         """
-        self.root.after(0, self._sync, active_slots)
+        self.root.after(0, self._sync, active_slots_with_hwnd)
 
-    def hide_all(self):
-        """포커스가 비관리 창으로 이동했을 때 오버레이를 모두 숨깁니다."""
-        self.root.after(0, self._hide_all)
-
-    def _hide_all(self):
-        for ov in self.overlays.values():
-            if ov.winfo_exists():
-                ov.withdraw()
-
-    def show_all(self):
-        """다시 포커스가 관리 창으로 왔을 때 오버레이를 표시합니다."""
-        self.root.after(0, self._show_all)
-
-    def _show_all(self):
-        for ov in self.overlays.values():
-            if ov.winfo_exists():
-                ov.deiconify()
-
-    def _sync(self, active_slots):
-        current_indices = [slot[0] for slot in active_slots]
+    def _sync(self, active_slots_with_hwnd):
+        current_indices = [slot[0] for slot in active_slots_with_hwnd]
 
         # 1. 갱신 및 생성
-        for idx, rect in active_slots:
+        for idx, rect, target_hwnd in active_slots_with_hwnd:
             if idx not in self.overlays:
                 ov = tk.Toplevel(self.root)
                 ov.overrideredirect(True)
                 # alpha 0.01: 거의 눈에 보이지 않지만 클릭 이벤트는 캐치함
-                ov.attributes("-topmost", True, "-alpha", 0.01)
+                ov.attributes("-alpha", 0.01)
                 ov.configure(bg="black", cursor="hand2")
+
                 # 클릭 시 콜백 실행 (lambda의 기본값 바인딩 트릭 사용)
                 ov.bind("<Button-1>", lambda e, i=idx: self._on_click(i))
                 self.overlays[idx] = ov
+
+                # 창 소유 관계 설정
+                try:
+                    overlay_hwnd = int(ov.winfo_id())
+                    win32gui.SetWindowLong(
+                        overlay_hwnd, win32con.GWL_HWNDPARENT, target_hwnd
+                    )
+                except Exception as e:
+                    print(f"Error setting window owner for overlay {idx}: {e}")
             else:
                 ov = self.overlays[idx]
 
@@ -64,7 +58,8 @@ class OverlayManager:
         # 2. 불필요한 오버레이 제거
         for idx in list(self.overlays.keys()):
             if idx not in current_indices:
-                self.overlays[idx].destroy()
+                if self.overlays[idx].winfo_exists():
+                    self.overlays[idx].destroy()
                 del self.overlays[idx]
 
     def _on_click(self, idx):
