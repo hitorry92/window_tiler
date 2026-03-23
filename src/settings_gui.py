@@ -278,7 +278,14 @@ class SettingsGUI:
             foreground=THEME["text_dim"],
         ).pack(anchor="w", pady=(0, 10))
 
-        self.slot_tree = SlotTreeView(laps_frame, self.tracker, self.update_ui)
+        self.slot_tree = SlotTreeView(
+            laps_frame,
+            self.tracker,
+            self.update_ui,
+            gui_callbacks={
+                "on_right_click": self._on_tree_right_click,
+            },
+        )
 
         self._update_monitors()
         self.mon_combo.bind("<<ComboboxSelected>>", self._on_monitor_change)
@@ -1245,6 +1252,45 @@ class SettingsGUI:
             self.root.quit()
             self.root.destroy()
 
+    def _on_tree_right_click(self, event):
+        """창 배정 기록 우클릭 메뉴"""
+        sel = self.slot_tree.tree.selection()
+        if not sel:
+            return
+        val = self.slot_tree.tree.item(sel[0], "values")
+        idx = int(val[0])
+        tracker = self._get_current_tracker()
+        is_locked = False
+        overlay_enabled = True
+        if tracker and idx < len(tracker.slots):
+            is_locked = tracker.slots[idx].get("locked", False)
+            overlay_enabled = tracker.slots[idx].get("overlay_enabled", True)
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(
+            label="창 할당...", command=self._assign_window_to_selected_slot
+        )
+        menu.add_separator()
+        lock_label = "고정 해제" if is_locked else "고정"
+        menu.add_command(label=lock_label, command=self._toggle_slot_lock)
+        overlay_label = "덮개 끄기" if overlay_enabled else "덮개 켜기"
+        menu.add_command(label=overlay_label, command=self._toggle_overlay)
+        menu.add_command(label="창 할당 해제", command=self._unbind_selected_slot)
+        menu.post(event.x_root, event.y_root)
+
+    def _assign_window_to_selected_slot(self):
+        """선택된 슬롯에 창을 할당"""
+        sel = self.slot_tree.tree.selection()
+        if not sel:
+            return
+        val = self.slot_tree.tree.item(sel[0], "values")
+        if not val:
+            return
+        target_slot = int(val[0])
+        self._select_window_popup(
+            target_slot, self.root.winfo_rootx(), self.root.winfo_rooty()
+        )
+
     def _toggle_slot_lock(self):
         """선택된 슬롯의 고정 상태 토글"""
         sel = self.slot_tree.tree.selection()
@@ -1318,7 +1364,8 @@ class SettingsGUI:
             "5. 레이아웃과 메인 슬롯 (미리보기 화면)\n"
             "   - 분할선(하늘색 점선)을 드래그하여 슬롯 크기를 바꿀 수 있습니다.\n"
             "   - 특정 슬롯을 [왼쪽 클릭]하면 그 자리가 'MAIN(메인 슬롯)'이 됩니다.\n"
-            "   - [오른쪽 클릭]하면 두 슬롯을 하나로 합치거나 초기화할 수 있습니다.\n\n"
+            "   - [오른쪽 클릭]하면 두 슬롯을 하나로 합치거나 초기화할 수 있습니다.\n"
+            "   - ⚠️ 주의: 슬롯 크기를 너무 작게 조절하면 창이 제대로 표시되지 않을 수 있습니다.\n\n"
             "6. 창 전환(스왑) 조작법\n"
             "   - 'MAIN 슬롯'이 아닌 보조 슬롯의 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
             "   - 클릭 즉시 MAIN 슬롯과 자리가 부드럽게 교체됩니다.\n"

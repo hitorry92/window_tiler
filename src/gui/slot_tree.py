@@ -55,6 +55,9 @@ class SlotTreeView:
             return
         self.tree.selection_set(item)
 
+        if self.gui_callbacks.get("on_right_click"):
+            self.gui_callbacks["on_right_click"](event)
+
     def _on_double_click(self, event):
         region = self.tree.identify_region(event.x, event.y)
         if region != "cell":
@@ -69,9 +72,6 @@ class SlotTreeView:
             return
 
         col_idx = int(column.replace("#", ""))
-        if col_idx not in (3, 4):
-            return
-
         idx = int(item_id)
         if idx >= len(self.tracker.slots):
             return
@@ -80,6 +80,9 @@ class SlotTreeView:
             self.tracker.toggle_slot_lock(idx)
         elif col_idx == 4:
             self.tracker.toggle_overlay(idx)
+        elif col_idx in (1, 2):
+            self.tracker.slots[idx]["hwnd"] = None
+            self.tracker.reposition_all()
 
         self.on_update_callback()
 
