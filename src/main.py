@@ -35,13 +35,14 @@ class WindowTilerApp:
         self.config = load_config()
         self.profiles = load_profiles()
 
-        # 단입 트래커 생성
+        self.gui = None  # 순서 문제 해결을 위해 None으로 초기화
+
         mon_idx = self.config.get("monitor_index", 0)
         self.tracker = WindowTracker(
             mon_idx,
             self.profiles,
             self.config,
-            ui_update_callback=lambda: self.gui.root.after(0, self.gui.update_ui),
+            ui_update_callback=self._request_ui_update,
         )
 
         self.paused_event = threading.Event()
@@ -62,6 +63,10 @@ class WindowTilerApp:
         self.tray = TrayManager(
             self.on_pause_toggle, self.on_open_settings, self.on_quit
         )
+
+    def _request_ui_update(self):
+        if self.gui and self.gui.root:
+            self.gui.root.after(0, self.gui.update_ui)
 
     def on_start(self):
         self.paused_event.clear()
@@ -92,20 +97,21 @@ class WindowTilerApp:
         self.on_pause_toggle(None, None)
 
     def on_open_settings(self, icon, item):
-        self.gui.root.after(0, self.gui.root.deiconify)
+        if self.gui and self.gui.root:
+            self.gui.root.after(0, self.gui.show)
 
     def on_quit(self, icon, item):
         self.tray.stop()
-        self.tracker.stop()  # 주기적 체크 스레드 중지
+        self.tracker.stop()
         self.gui.quit()
         sys.exit(0)
 
     def run(self):
-        self.tracker.start()  # 주기적 체크 스레드 시작
+        self.tracker.start()
         self.focus_monitor.start()
         self.hotkey.start()
         self.tray.start()
-        self.gui.show()  # root 초기화 및 UI 생성
+        self.gui.show()
 
         # OverlayManager 초기화 및 연동
         self.overlay_manager = OverlayManager(self.gui.root, self.tracker.swap_to_main)

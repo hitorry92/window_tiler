@@ -50,14 +50,20 @@ class SettingsGUI:
         self.style = None
 
     def show(self):
-        if self.root:
+        if self.root and self.root.winfo_exists():
             self.root.deiconify()
+        else:
+            self._create_ui()
+
+        self.update_ui()  # 창을 보여줄 때 항상 최신 데이터로 갱신
+
+    def _create_ui(self):
+        if self.root and self.root.winfo_exists():
             return
 
         self.root = tk.Tk()
-        self.root.title("Window Tiler - Stopwatch Edition")
-        self.root.configure(bg=THEME["bg"])
-        self.root.resizable(False, False)
+        self.root.title("Window Tiler")
+        self.root.protocol("WM_DELETE_WINDOW", self.hide)
 
         self.style = setup_styles(self.root)
 
@@ -269,12 +275,17 @@ class SettingsGUI:
         tree_container.pack(fill="both", expand=True)
 
         self.tree = ttk.Treeview(
-            tree_container, columns=("index", "title"), show="headings", height=15
+            tree_container,
+            columns=("index", "title", "locked"),
+            show="headings",
+            height=15,
         )
-        self.tree.heading("index", text="랩 (슬롯)")
+        self.tree.heading("index", text="슬롯")
         self.tree.heading("title", text="창 제목")
-        self.tree.column("index", width=80, anchor="center")
-        self.tree.column("title", width=420)
+        self.tree.heading("locked", text="고정")
+        self.tree.column("index", width=60, anchor="center")
+        self.tree.column("title", width=380)
+        self.tree.column("locked", width=60, anchor="center")
 
         tree_sc = ttk.Scrollbar(
             tree_container, orient="vertical", command=self.tree.yview
@@ -290,6 +301,9 @@ class SettingsGUI:
         self.mon_combo.bind("<<ComboboxSelected>>", self._on_monitor_change)
         self._update_profile_combo()
         self.prof_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
+
+        # 최초 UI 생성 시 한 번 전체 업데이트
+        self.update_ui()
 
     def set_status(self, text, status_type="info"):
         if not self.status_label:
@@ -368,14 +382,16 @@ class SettingsGUI:
                 self.prof_combo.set(self.config.get("profile", "기본"))
                 return
 
-        # 디스크에서 원본 프로필을 다시 로드하여 덮어쓰기
-        fresh_profiles = load_profiles()
-        self.profiles = fresh_profiles
+        # 디스크에서 원본 프로필을 다시 로드 (tracker가 참조하는 self.profiles를 교체)
+        self.profiles.clear()
+        self.profiles.update(load_profiles())
 
-        name = self.prof_combo.get()
+        name = self.prof_combo.get().strip("*")
         self.config["profile"] = name
-        self.tracker.update_layout()
-        self.update_ui()
+
+        # 레이아웃 갱신 요청
+        self._request_layout_update(reposition=True)
+
         save_config(self.config)
         self.profile_modified = False
         self._update_profile_combo_display()
@@ -494,47 +510,28 @@ class SettingsGUI:
     def _on_canvas_release(self, event):
         if self.dragging_split:
             self.dragging_split = None
-            tracker = self._get_current_tracker()
-            if tracker:
-                tracker.reposition_all()
-        self.profile_modified = True
-        self._update_profile_combo_display()
+            self._request_layout_update(reposition=True)
 
     def _add_v_split(self):
         cfg = self._get_mon_cfg()
         p = self.profiles.get(cfg["profile"], self.profiles["기본"])
         p.setdefault("vertical", []).append(0.5)
         p["vertical"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
+        self._request_layout_update()
 
     def _add_h_split(self):
         cfg = self._get_mon_cfg()
         p = self.profiles.get(cfg["profile"], self.profiles["기본"])
         p.setdefault("horizontal", []).append(0.5)
         p["horizontal"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
+        self._request_layout_update()
 
     def _reset_splits(self):
         cfg = self._get_mon_cfg()
         p = self.profiles.get(cfg["profile"], self.profiles["기본"])
         p["horizontal"] = []
         p["vertical"] = [0.33, 0.67]
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
+        self._request_layout_update()
 
     def _add_v_split(self):
         cfg = self._get_mon_cfg()
@@ -632,7 +629,6 @@ class SettingsGUI:
             tracker.update_layout()
             tracker.reposition_all()
         self.update_ui()
-        # save_profiles(self.profiles) -> 제거
         self.profile_modified = True
         self._update_profile_combo_display()
 
@@ -752,13 +748,15 @@ class SettingsGUI:
 
         self._update_numerical_inputs()
         self.tree.delete(*self.tree.get_children())
-        for i, hwnd in enumerate(tracker.slot_hwnds):
+        for i, slot in enumerate(tracker.slots):
+            hwnd = slot["hwnd"]
             title = (
                 win32gui.GetWindowText(hwnd)
                 if hwnd and win32gui.IsWindow(hwnd)
                 else "(비어 있음)"
             )
-            self.tree.insert("", "end", values=(i, title))
+            locked_icon = "🔒" if slot["locked"] else ""
+            self.tree.insert("", "end", values=(i, title, locked_icon))
 
     def _on_canvas_right_click(self, event):
         tracker = self._get_current_tracker()
@@ -835,10 +833,10 @@ class SettingsGUI:
             sel = lb.curselection()
             if sel:
                 hwnd, _ = windows[sel[0]]
-                for i, h in enumerate(tracker.slot_hwnds):
-                    if h == hwnd:
-                        tracker.slot_hwnds[i] = None
-                tracker.slot_hwnds[target_slot] = hwnd
+                for i, slot in enumerate(tracker.slots):
+                    if slot["hwnd"] == hwnd:
+                        tracker.slots[i]["hwnd"] = None
+                tracker.slots[target_slot]["hwnd"] = hwnd
                 tracker.reposition_all()
                 self.update_ui()
                 popup.destroy()
@@ -893,11 +891,7 @@ class SettingsGUI:
             updated_merges.append(list(new_group))
 
             p["merges"] = updated_merges
-            # save_profiles(self.profiles) -> 제거
-            self.tracker.update_layout()
-            self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
+            self._request_layout_update()
 
     def _remove_split(self, stype, index):
         cfg = self._get_mon_cfg()
@@ -927,11 +921,13 @@ class SettingsGUI:
 
         # 이 슬롯의 베이스 인덱스들을 포함하는 모든 머지 그룹 삭제
         p["merges"] = [g for g in merges if not any(idx in base_indices for idx in g)]
+        self._request_layout_update()
 
-        self.tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
+    def _reset_all_merges(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p["merges"] = []
+        self._request_layout_update()
 
     def _reset_all_merges(self):
         cfg = self._get_mon_cfg()
@@ -950,9 +946,35 @@ class SettingsGUI:
         current_name = self.config.get("profile", "기본")
         display_name = f"{current_name}*" if self.profile_modified else current_name
 
-        # 현재 선택된 값의 텍스트를 직접 변경
-        # 이 방법이 이상하게 동작할 경우, combobox의 list를 재설정해야 할 수 있음
-        self.prof_combo.set(display_name)
+        current_values = list(self.prof_combo["values"])
+        try:
+            # Find the actual name (without *) to update it
+            real_name_index = -1
+            for i, v in enumerate(current_values):
+                if v.strip("*") == current_name:
+                    real_name_index = i
+                    break
+
+            if real_name_index != -1:
+                current_values[real_name_index] = display_name
+                self.prof_combo["values"] = current_values
+                self.prof_combo.set(display_name)
+            else:
+                self.prof_combo.set(display_name)
+        except tk.TclError:
+            self.prof_combo.set(display_name)
+
+    def _request_layout_update(self, reposition=False):
+        """레이아웃 변경 시 필요한 모든 UI 갱신 작업을 중앙에서 처리합니다."""
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+            if reposition:
+                tracker.reposition_all()
+
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
 
     def _get_canvas_coords(self, index):
         tracker = self._get_current_tracker()
@@ -1256,9 +1278,38 @@ class SettingsGUI:
             return
         self.tree.selection_set(item)
 
+        sel = self.tree.selection()
+        val = self.tree.item(sel[0], "values")
+        idx = int(val[0])
+        tracker = self._get_current_tracker()
+        is_locked = False
+        if tracker and idx < len(tracker.slots):
+            is_locked = tracker.slots[idx].get("locked", False)
+
         menu = tk.Menu(self.root, tearoff=0)
+        lock_label = "고정 해제" if is_locked else "고정"
+        menu.add_command(label=lock_label, command=self._toggle_slot_lock)
         menu.add_command(label="이 슬롯 할당 해제", command=self._unbind_selected_slot)
         menu.post(event.x_root, event.y_root)
+
+    def _toggle_slot_lock(self):
+        """선택된 슬롯의 고정 상태 토글"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+
+        val = self.tree.item(sel[0], "values")
+        if not val:
+            return
+
+        idx = int(val[0])
+        tracker = self._get_current_tracker()
+        if tracker and idx < len(tracker.slots):
+            tracker.toggle_slot_lock(idx)
+            locked = tracker.slots[idx].get("locked", False)
+            status = "고정됨" if locked else "고정 해제됨"
+            self.set_status(f"● 슬롯 {idx} {status}", "info")
+            self.update_ui()
 
     def _unbind_selected_slot(self):
         """선택된 슬롯의 창 할당 해제 (Cycle 15)"""
@@ -1273,8 +1324,8 @@ class SettingsGUI:
 
         idx = int(val[0])
         tracker = self._get_current_tracker()
-        if tracker and idx < len(tracker.slot_hwnds):
-            tracker.slot_hwnds[idx] = None
+        if tracker and idx < len(tracker.slots):
+            tracker.slots[idx]["hwnd"] = None
             tracker.reposition_all()
             self.update_ui()
             self.set_status(f"● 슬롯 {idx} 할당 해제됨", "info")
