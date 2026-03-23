@@ -10,12 +10,21 @@ from .gui.window_selector import WindowSelector
 
 
 class SettingsGUI:
-    def __init__(self, config, profiles, tracker, start_callback, stop_callback):
+    def __init__(
+        self,
+        config,
+        profiles,
+        tracker,
+        start_callback,
+        stop_callback,
+        update_hotkey_callback=None,
+    ):
         self.config = config
         self.profiles = profiles
         self.tracker = tracker
         self.start_callback = start_callback
         self.stop_callback = stop_callback
+        self.update_hotkey_callback = update_hotkey_callback
 
         self.root = None
         self.preview_canvas = None
@@ -125,11 +134,22 @@ class SettingsGUI:
 
         split_btn_p = ttk.Frame(left_pane, style="Container.TFrame")
         split_btn_p.pack(fill="x", pady=(0, 10))
+
+        # 간격
         ttk.Label(split_btn_p, text="간격:", style="Container.TLabel").pack(side="left")
         self.gap_var = tk.StringVar(value=str(self.config.get("gap", 0)))
         gap_e = ttk.Entry(split_btn_p, textvariable=self.gap_var, width=5)
         gap_e.pack(side="left", padx=5)
         gap_e.bind("<Return>", lambda e: self._on_gap_change())
+
+        # 핫키
+        ttk.Label(split_btn_p, text="단축키:", style="Container.TLabel").pack(
+            side="left", padx=(10, 0)
+        )
+        self.hotkey_var = tk.StringVar(value=self.config.get("hotkey", "Ctrl+Shift+T"))
+        hotkey_e = ttk.Entry(split_btn_p, textvariable=self.hotkey_var, width=12)
+        hotkey_e.pack(side="left", padx=5)
+        hotkey_e.bind("<Return>", lambda e: self._on_hotkey_change())
 
         ttk.Button(split_btn_p, text="+ 세로 분할", command=self._add_v_split).pack(
             side="right", padx=2
@@ -927,6 +947,21 @@ class SettingsGUI:
         except ValueError:
             messagebox.showwarning("오류", "숫자만 입력해 주세요.")
 
+    def _on_hotkey_change(self):
+        new_hotkey = self.hotkey_var.get().strip()
+        if not new_hotkey:
+            messagebox.showwarning("오류", "단축키를 입력해 주세요.")
+            return
+
+        if self.update_hotkey_callback:
+            try:
+                self.update_hotkey_callback(new_hotkey)
+                self.set_status(f"● 핫키 '{new_hotkey}' 적용됨", "success")
+            except Exception as e:
+                messagebox.showerror(
+                    "단축키 등록 오류", f"입력한 단축키 등록에 실패했습니다:\n{e}"
+                )
+
     # Removed unused _toggle_interactive
 
     def loop(self):
@@ -1001,7 +1036,13 @@ class SettingsGUI:
             "3. 창 전환(스왑) 조작법 - 투명 덮개 기능\n"
             "   - 'MAIN 슬롯'이 아닌 조그만 조각(보조 슬롯)에 있는 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
             "   - 클릭 즉시 MAIN 슬롯과 자리가 부드럽게 스왑됩니다.\n"
-            "   - (오작동 방지를 위해 보조 슬롯 위에는 투명한 유리 덮개가 씌워져 있어, 안쪽 내용이 잘못 눌리지 않고 쾌적하게 전환됩니다.)"
+            "   - (오작동 방지를 위해 보조 슬롯 위에는 투명한 유리 덮개가 씌워져 있어, 안쪽 내용이 잘못 눌리지 않고 쾌적하게 전환됩니다.)\n\n"
+            "4. 단축키 (핫키) 토글 기능\n"
+            "   - 설정된 단축키(기본 Ctrl+Shift+T)를 누르면, 타일링 동작을 즉시 일시 정지하거나 재개할 수 있습니다.\n"
+            "   - 좌측 화면의 '단축키' 입력란에 원하는 조합을 넣고 Enter를 눌러 변경 가능합니다.\n\n"
+            "5. 시스템 트레이 (백그라운드 동작)\n"
+            "   - 설정창을 'X'로 닫아도 프로그램은 우측 하단 시스템 트레이 아이콘으로 계속 동작합니다.\n"
+            "   - 트레이 아이콘을 우클릭하여 설정창을 다시 열거나, 타일링 토글, 완전 종료를 할 수 있습니다."
         )
         messagebox.showinfo("Window Tiler 사용 방법", help_text)
 

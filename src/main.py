@@ -34,7 +34,12 @@ class WindowTilerApp:
         self.focus_monitor = FocusMonitor(self.tracker, self.paused_event)
 
         self.gui = SettingsGUI(
-            self.config, self.profiles, self.tracker, self.on_start, self.on_stop
+            self.config,
+            self.profiles,
+            self.tracker,
+            self.on_start,
+            self.on_stop,
+            self.on_hotkey_change,
         )
         self.hotkey = HotkeyManager(
             self.config.get("hotkey", "Ctrl+Shift+T"), self.on_hotkey
@@ -60,6 +65,13 @@ class WindowTilerApp:
             self.on_start()
         else:
             self.on_stop()
+
+    def on_hotkey_change(self, new_hotkey_str):
+        self.hotkey.stop()
+        self.hotkey = HotkeyManager(new_hotkey_str, self.on_hotkey)
+        self.hotkey.start()
+        self.config["hotkey"] = new_hotkey_str
+        save_config(self.config)
 
     def on_hotkey(self):
         self.on_pause_toggle(None, None)
