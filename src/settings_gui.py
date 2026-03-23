@@ -1026,29 +1026,28 @@ class SettingsGUI:
         else:
             key_name = keysym
 
-        # 수정키만 눌렀을 때는 표시하지 않음
-        modifier_keys = {"Ctrl", "Shift", "Alt", "Win"}
-        if key_name in modifier_keys and not any(
-            k in self.hotkey_var.get() for k in modifier_keys if k != key_name
-        ):
-            # 첫 번째 수정키인 경우만 표시
-            current = self.hotkey_var.get()
-            if current == "키를 눌러주세요...":
-                self.hotkey_var.set(key_name)
-            elif key_name not in current:
-                self.hotkey_var.set(f"{current}+{key_name}")
-        elif key_name not in modifier_keys:
-            # 일반 키인 경우
-            current = self.hotkey_var.get()
-            if current == "키를 눌러주세요...":
-                self.hotkey_var.set(key_name)
-            else:
-                # 기존 수정키 제거하고 새로운 키만 표시
-                mods = [k for k in current.split("+") if k in modifier_keys]
-                if mods:
-                    self.hotkey_var.set(f"{'+'.join(mods)}+{key_name}")
-                else:
-                    self.hotkey_var.set(key_name)
+        modifier_order = ["Ctrl", "Shift", "Alt", "Win"]
+
+        current_str = self.hotkey_var.get()
+        if current_str == "키를 눌러주세요...":
+            current_keys = []
+        else:
+            current_keys = current_str.split("+")
+
+        if key_name in modifier_order:
+            if key_name not in current_keys:
+                current_keys.append(key_name)
+        else:
+            # 일반 키는 하나만 유지하고 기존 일반 키 교체
+            current_keys = [k for k in current_keys if k in modifier_order]
+            current_keys.append(key_name)
+
+        # Modifier 순서대로 정렬
+        mods = [k for k in modifier_order if k in current_keys]
+        non_mods = [k for k in current_keys if k not in modifier_order]
+
+        final_keys = mods + non_mods
+        self.hotkey_var.set("+".join(final_keys))
 
         return "break"
 

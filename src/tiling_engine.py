@@ -182,9 +182,15 @@ class WindowTracker:
             return
 
         with self.lock:
-            # [NEW] 배정 기록에 없는 창은 무시
+            # [NEW] 배정 기록에 없는 창은 무시하고, 오버레이 숨기기
             if hwnd not in self.slot_hwnds:
+                if self.overlay_manager:
+                    self.overlay_manager.hide_all()
                 return
+
+            # 관리 창이 포커스를 받으면 오버레이 다시 표시
+            if self.overlay_manager:
+                self.overlay_manager.show_all()
 
             # 해당 창이 현재 모니터 영역 안에 있는지 확인
             m = self.monitor_info

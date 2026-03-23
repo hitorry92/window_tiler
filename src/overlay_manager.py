@@ -21,6 +21,24 @@ class OverlayManager:
         """
         self.root.after(0, self._sync, active_slots)
 
+    def hide_all(self):
+        """포커스가 비관리 창으로 이동했을 때 오버레이를 모두 숨깁니다."""
+        self.root.after(0, self._hide_all)
+
+    def _hide_all(self):
+        for ov in self.overlays.values():
+            if ov.winfo_exists():
+                ov.withdraw()
+
+    def show_all(self):
+        """다시 포커스가 관리 창으로 왔을 때 오버레이를 표시합니다."""
+        self.root.after(0, self._show_all)
+
+    def _show_all(self):
+        for ov in self.overlays.values():
+            if ov.winfo_exists():
+                ov.deiconify()
+
     def _sync(self, active_slots):
         current_indices = [slot[0] for slot in active_slots]
 
