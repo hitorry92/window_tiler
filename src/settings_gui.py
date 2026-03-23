@@ -6,7 +6,7 @@ import win32api
 import win32con
 from .win_utils import get_all_monitors, get_window_list, move_window_precision
 from .win_utils import get_window_list
-from .app_config import save_config, save_profiles
+from .app_config import save_config, save_profiles, load_profiles
 from .gui.theme import THEME, setup_styles
 from .gui.window_selector import WindowSelector
 
@@ -27,6 +27,8 @@ class SettingsGUI:
         self.start_callback = start_callback
         self.stop_callback = stop_callback
         self.update_hotkey_callback = update_hotkey_callback
+
+        self.profile_modified = False
 
         self.root = None
         self.preview_canvas = None
@@ -95,6 +97,9 @@ class SettingsGUI:
         ttk.Button(cfg_frame, text="삭제", width=4, command=self._delete_profile).pack(
             side="left", padx=1
         )
+        ttk.Button(
+            cfg_frame, text="저장", width=4, command=self._save_current_profile
+        ).pack(side="left", padx=1)
 
         self.status_label = tk.Label(
             cfg_frame,
@@ -349,12 +354,31 @@ class SettingsGUI:
         else:
             self.prof_combo.current(0) if names else None
 
+        self.profile_modified = False
+        self._update_profile_combo_display()
+
     def _on_profile_change(self, event):
+        if self.profile_modified:
+            if not messagebox.askyesno(
+                "변경사항 저장",
+                "저장되지 않은 변경사항이 있습니다. 저장하지 않고 전환하시겠습니까?",
+                parent=self.root,
+            ):
+                # 취소 시 콤보박스 선택 원상 복구
+                self.prof_combo.set(self.config.get("profile", "기본"))
+                return
+
+        # 디스크에서 원본 프로필을 다시 로드하여 덮어쓰기
+        fresh_profiles = load_profiles()
+        self.profiles = fresh_profiles
+
         name = self.prof_combo.get()
         self.config["profile"] = name
         self.tracker.update_layout()
         self.update_ui()
         save_config(self.config)
+        self.profile_modified = False
+        self._update_profile_combo_display()
 
     def _add_profile(self):
         name = simpledialog.askstring(
@@ -375,14 +399,19 @@ class SettingsGUI:
                 "main_slot_index": self.config.get("main_slot_index", 0),
             }
             self.config["profile"] = name
+            # 새 프로필 추가는 즉시 저장
             save_profiles(self.profiles)
             save_config(self.config)
             self._update_profile_combo()
+            self.profile_modified = False
+            self._update_profile_combo_display()
             messagebox.showinfo("성공", f"'{name}' 프로필이 추가되었습니다.")
 
     def _save_current_profile(self):
-        name = self.config.get("profile")
-        messagebox.showinfo("알림", f"'{name}' 프로필: 분할선 조정 시 즉시 반영됩니다.")
+        save_profiles(self.profiles)
+        self.profile_modified = False
+        self._update_profile_combo_display()
+        self.set_status("● 프로필이 저장되었습니다.", "success")
 
     def _delete_profile(self):
         name = self.config.get("profile")
@@ -392,10 +421,13 @@ class SettingsGUI:
         if messagebox.askyesno("삭제 확인", f"'{name}' 프로필을 삭제하시겠습니까?"):
             del self.profiles[name]
             self.config["profile"] = "기본"
+            # 삭제는 즉시 저장
             save_profiles(self.profiles)
             save_config(self.config)
             self._update_profile_combo()
             self._on_profile_change(None)
+            self.profile_modified = False
+            self._update_profile_combo_display()
 
     def _on_canvas_press(self, event):
         if self.hover_split:
@@ -411,7 +443,7 @@ class SettingsGUI:
                 cfg["main_slot_index"] = i
                 tracker.update_layout()
                 self.update_ui()
-                save_config(self.config)
+                save_config(self.config)  # 메인 슬롯 변경은 즉시 저장
                 self._show_slot_overlay(i, tracker)
                 break
 
@@ -461,33 +493,13 @@ class SettingsGUI:
 
     def _on_canvas_release(self, event):
         if self.dragging_split:
-            save_profiles(self.profiles)
+            # save_profiles(self.profiles) -> 제거
             self.dragging_split = None
             tracker = self._get_current_tracker()
             if tracker:
                 tracker.reposition_all()
-
-    def _add_v_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("vertical", []).append(0.5)
-        p["vertical"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        save_profiles(self.profiles)
-
-    def _add_h_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("horizontal", []).append(0.5)
-        p["horizontal"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        save_profiles(self.profiles)
+            self.profile_modified = True
+            self._update_profile_combo_display()
 
     def _reset_splits(self):
         cfg = self._get_mon_cfg()
@@ -498,7 +510,8 @@ class SettingsGUI:
         if tracker:
             tracker.update_layout()
         self.update_ui()
-        save_profiles(self.profiles)
+        self.profile_modified = True
+        self._update_profile_combo_display()
 
     def _on_manual_split_change(self, stype, index, entry_var):
         try:
@@ -517,7 +530,34 @@ class SettingsGUI:
                     tracker.update_layout()
                     tracker.reposition_all()
                 self.update_ui()
-                save_profiles(self.profiles)
+                # save_profiles(self.profiles) -> 제거
+            self.profile_modified = True
+            self._update_profile_combo_display()
+
+    def _add_v_split(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p.setdefault("vertical", []).append(0.5)
+        p["vertical"].sort()
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _add_h_split(self):
+        cfg = self._get_mon_cfg()
+        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
+        p.setdefault("horizontal", []).append(0.5)
+        p["horizontal"].sort()
+        tracker = self._get_current_tracker()
+        if tracker:
+            tracker.update_layout()
+        self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
         except ValueError:
             pass
 
@@ -535,7 +575,9 @@ class SettingsGUI:
             tracker.update_layout()
             tracker.reposition_all()
         self.update_ui()
-        save_profiles(self.profiles)
+        # save_profiles(self.profiles) -> 제거
+        self.profile_modified = True
+        self._update_profile_combo_display()
 
     def _update_numerical_inputs(self):
         if not self.v_scroll_frame:
@@ -794,9 +836,11 @@ class SettingsGUI:
             updated_merges.append(list(new_group))
 
             p["merges"] = updated_merges
-            save_profiles(self.profiles)
+            # save_profiles(self.profiles) -> 제거
             self.tracker.update_layout()
             self.update_ui()
+            self.profile_modified = True
+            self._update_profile_combo_display()
 
     def _unmerge_slot(self, slot_idx):
         tracker = self._get_current_tracker()
@@ -810,17 +854,33 @@ class SettingsGUI:
         # 이 슬롯의 베이스 인덱스들을 포함하는 모든 머지 그룹 삭제
         p["merges"] = [g for g in merges if not any(idx in base_indices for idx in g)]
 
-        save_profiles(self.profiles)
+        # save_profiles(self.profiles) -> 제거
         self.tracker.update_layout()
         self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
 
     def _reset_all_merges(self):
         cfg = self._get_mon_cfg()
         p = self.profiles.get(cfg["profile"], self.profiles["기본"])
         p["merges"] = []
-        save_profiles(self.profiles)
+        # save_profiles(self.profiles) -> 제거
         self.tracker.update_layout()
         self.update_ui()
+        self.profile_modified = True
+        self._update_profile_combo_display()
+
+    def _update_profile_combo_display(self):
+        """콤보박스에 수정 상태(*)를 반영합니다."""
+        if not self.prof_combo:
+            return
+
+        current_name = self.config.get("profile", "기본")
+        display_name = f"{current_name}*" if self.profile_modified else current_name
+
+        # 현재 선택된 값의 텍스트를 직접 변경
+        # 이 방법이 이상하게 동작할 경우, combobox의 list를 재설정해야 할 수 있음
+        self.prof_combo.set(display_name)
 
     def _get_canvas_coords(self, index):
         tracker = self._get_current_tracker()
@@ -1152,25 +1212,28 @@ class SettingsGUI:
         help_text = (
             "■ Window Tiler 사용 방법 안내 ■\n\n"
             "1. 창 배정 원칙 (매우 중요!)\n"
-            "   - 프로그램은 우측 '창 배정 기록'에 등록된 창들만 관리합니다. (등록 안 된 창은 안 섞임)\n"
-            "   - 다음 3가지 방법으로 창을 배정해 주세요:\n"
-            "     ① [자동 지정]: 현재 켜진 모든 창을 빈 슬롯에 꽉 채웁니다.\n"
-            "     ② [선택 지정]: 창 목록을 보고 슬롯 순서대로 원하는 창만 골라 넣습니다.\n"
-            "     ③ 캔버스 우클릭: 미리보기 화면의 빈 슬롯을 우클릭하여 하나씩 개별 배정합니다.\n\n"
-            "2. 레이아웃과 메인 슬롯 (미리보기 화면)\n"
-            "   - 분할선(하늘색 점선)을 드래그하여 슬롯 크기를 자유롭게 바꿀 수 있습니다.\n"
+            "   - 프로그램은 우측 '창 배정 기록'에 등록된 창들만 관리합니다.\n"
+            "   - 등록되지 않은 창은 타일링되지 않으며, 마우스 조작에 영향을 받지 않습니다.\n"
+            "   - 다음 방법으로 창을 배정(등록)할 수 있습니다:\n"
+            "     ① [자동 지정]: 현재 켜진 모든 창을 빈 슬롯에 자동으로 채웁니다.\n"
+            "     ② [선택 지정]: 목록에서 원하는 창을 순서대로 직접 선택하여 채웁니다.\n"
+            "     ③ 캔버스 우클릭: 미리보기의 특정 슬롯을 우클릭하여 개별 지정합니다.\n\n"
+            "2. 창 배정 해제 (더블 클릭)\n"
+            "   - 우측 '창 배정 기록' 목록에 있는 항목을 더블 클릭하면, 해당 슬롯에서 창 배정이 즉시 해제되어 빈 슬롯이 됩니다.\n\n"
+            "3. 레이아웃과 메인 슬롯 (미리보기 화면)\n"
+            "   - 분할선(하늘색 점선)을 드래그하여 슬롯 크기를 바꿀 수 있습니다.\n"
             "   - 특정 슬롯을 [왼쪽 클릭]하면 그 자리가 'MAIN(메인 슬롯)'이 됩니다.\n"
             "   - [오른쪽 클릭]하면 두 슬롯을 하나로 합치거나 초기화할 수 있습니다.\n\n"
-            "3. 창 전환(스왑) 조작법 - 투명 덮개 기능\n"
-            "   - 'MAIN 슬롯'이 아닌 조그만 조각(보조 슬롯)에 있는 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
-            "   - 클릭 즉시 MAIN 슬롯과 자리가 부드럽게 스왑됩니다.\n"
-            "   - (오작동 방지를 위해 보조 슬롯 위에는 투명한 유리 덮개가 씌워져 있어, 안쪽 내용이 잘못 눌리지 않고 쾌적하게 전환됩니다.)\n\n"
-            "4. 단축키 (핫키) 토글 기능\n"
-            "   - 설정된 단축키(기본 Ctrl+Shift+T)를 누르면, 타일링 동작을 즉시 일시 정지하거나 재개할 수 있습니다.\n"
-            "   - 좌측 화면의 '단축키' 입력란에 원하는 조합을 넣고 Enter를 눌러 변경 가능합니다.\n\n"
-            "5. 시스템 트레이 (백그라운드 동작)\n"
-            "   - 설정창을 'X'로 닫아도 프로그램은 우측 하단 시스템 트레이 아이콘으로 계속 동작합니다.\n"
-            "   - 트레이 아이콘을 우클릭하여 설정창을 다시 열거나, 타일링 토글, 완전 종료를 할 수 있습니다."
+            "4. 창 전환(스왑) 조작법 - 투명 덮개 기능\n"
+            "   - 'MAIN 슬롯'이 아닌 보조 슬롯의 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
+            "   - 클릭 즉시 MAIN 슬롯과 자리가 부드럽게 교체됩니다.\n"
+            "   - (이때 투명 덮개는 타일러에 등록된 창에만 적용되므로, 다른 일반 창의 조작을 방해하지 않습니다.)\n\n"
+            "5. 단축키 (핫키) 토글 기능\n"
+            "   - 설정된 단축키(기본 Ctrl+Shift+T)로 타일링 동작을 즉시 켜고 끌 수 있습니다.\n"
+            "   - 좌측 '단축키' 입력 칸을 클릭하고, 원하는 키를 직접 눌러서 변경할 수 있습니다.\n\n"
+            "6. 시스템 트레이 (백그라운드 동작)\n"
+            "   - 설정창을 'X'로 닫아도 우측 하단 시스템 트레이에서 계속 실행됩니다.\n"
+            "   - 트레이 아이콘 우클릭 메뉴로 설정창 열기, 타일링 토글, 완전 종료가 가능합니다."
         )
         messagebox.showinfo("Window Tiler 사용 방법", help_text)
 
