@@ -1050,6 +1050,8 @@ class SettingsGUI:
                 else:
                     self.hotkey_var.set(key_name)
 
+        return "break"
+
     def _on_key_release(self, event):
         """키 릴리스 처리 - 입력 완료"""
         if not self._capturing_hotkey:
@@ -1057,6 +1059,7 @@ class SettingsGUI:
 
         # 잠시 후 입력 완료 처리
         self.root.after(100, self._finish_hotkey_capture)
+        return "break"
 
     def _finish_hotkey_capture(self):
         """키 입력 캡처 완료"""
