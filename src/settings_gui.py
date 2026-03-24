@@ -1259,15 +1259,18 @@ class SettingsGUI:
         def check_assignment_mode():
             if not self.root:
                 return
-            if hasattr(self, "btn_interactive"):
+            if hasattr(self, "btn_interactive") and self.btn_interactive is not None:
                 # 엔진에서 지정이 끝났는데 UI는 아직 '지정 중'인 경우
-                if (
-                    not self.tracker.is_assignment_mode
-                    and self.btn_interactive.cget("text") != "클릭으로 지정 시작"
-                ):
-                    self.btn_interactive.config(text="클릭으로 지정 시작")
-                    self.update_ui()
-                    self.set_status("● 모든 슬롯 지정 완료", "success")
+                try:
+                    if (
+                        not self.tracker.is_assignment_mode
+                        and self.btn_interactive.cget("text") != "클릭으로 지정 시작"
+                    ):
+                        self.btn_interactive.config(text="클릭으로 지정 시작")
+                        self.update_ui()
+                        self.set_status("● 모든 슬롯 지정 완료", "success")
+                except tk.TclError:
+                    pass
             self.root.after(500, check_assignment_mode)
 
         self.root.after(500, check_assignment_mode)
