@@ -7,11 +7,12 @@ from src.win_utils import get_window_list
 class WindowSelector:
     """열려 있는 창 목록을 보여주고 일괄 선택하여 지정하는 다이얼로그 (Cycle 15)"""
 
-    def __init__(self, parent, tracker, callback_ui, callback_status):
+    def __init__(self, parent, tracker, callback_ui, callback_status, target_slot=None):
         self.parent = parent
         self.tracker = tracker
         self.callback_ui = callback_ui
         self.callback_status = callback_status
+        self.target_slot = target_slot  # 단일 슬롯 할당 모드
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("창 선택")
@@ -52,6 +53,9 @@ class WindowSelector:
         self.tree.pack(side="left", fill="both", expand=True)
         sc.pack(side="right", fill="y")
 
+        # 더블클릭으로 적용
+        self.tree.bind("<Double-1>", lambda e: self._apply())
+
         # 하단 버튼
         btn_p = ttk.Frame(main_p, style="Container.TFrame")
         btn_p.pack(fill="x", pady=(20, 0))
@@ -88,6 +92,26 @@ class WindowSelector:
             idx_tag = self.tree.item(item, "tags")[0]
             selected_hwnds.append(self.windows[int(idx_tag)][0])
 
+        # 단일 슬롯 할당 모드
+        if self.target_slot is not None:
+            if len(selected_hwnds) > 1:
+                messagebox.showinfo("알림", "하나의 창만 선택해 주세요.")
+                return
+            if selected_hwnds:
+                hwnd = selected_hwnds[0]
+                for i, slot in enumerate(self.tracker.slots):
+                    if slot["hwnd"] == hwnd:
+                        self.tracker.slots[i]["hwnd"] = None
+                self.tracker.slots[self.target_slot]["hwnd"] = hwnd
+                self.tracker.reposition_all()
+                self.callback_ui()
+                self.callback_status(
+                    f"● 슬롯 {self.target_slot}에 창이 배정되었습니다.", "success"
+                )
+            self.dialog.destroy()
+            return
+
+        # 일괄 배정 모드
         empty_slots = [i for i, s in enumerate(self.tracker.slots) if s["hwnd"] is None]
 
         if not empty_slots:

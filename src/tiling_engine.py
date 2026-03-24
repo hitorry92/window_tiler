@@ -349,15 +349,24 @@ class WindowTracker:
         self.update_layout()
         self.reposition_all()
 
-    def auto_fill_all_slots(self):
+    def auto_fill_all_slots(self, excluded_windows=None):
         """현재 열려 있는 상위 창들을 각 슬롯에 자동 배분 (Cycle 15)"""
         from .win_utils import get_window_list
+
+        if excluded_windows is None:
+            excluded_windows = []
 
         # 현재 모니터의 활성 창 목록 가져오기
         windows = get_window_list(self.monitor_info)
         # 자신(Window Tiler) 제외
         my_hwnd = win32gui.GetForegroundWindow()  # 좀 더 확실한 자기 자신 찾기
-        targets = [w for w in windows if w[0] != my_hwnd and "Window Tiler" not in w[1]]
+        targets = [
+            w
+            for w in windows
+            if w[0] != my_hwnd
+            and "Window Tiler" not in w[1]
+            and w[1] not in excluded_windows
+        ]
 
         with self.lock:
             num_slots = len(self.slot_rects)

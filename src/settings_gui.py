@@ -9,6 +9,7 @@ from .win_utils import get_window_list
 from .app_config import save_config, save_profiles, load_profiles
 from .gui.theme import THEME, setup_styles
 from .gui.window_selector import WindowSelector
+from .gui.excluded_window_selector import ExcludedWindowSelector
 from .gui.slot_tree import SlotTreeView
 
 
@@ -227,7 +228,7 @@ class SettingsGUI:
 
         btn_select = tk.Button(
             controls,
-            text="선택 지정",
+            text="선택 자동 지정",
             bg=THEME["warning"],
             fg="#1a1a2e",
             font=("Segoe UI", 12, "bold"),
@@ -238,6 +239,20 @@ class SettingsGUI:
             command=self._show_window_selector,
         )
         btn_select.pack(side="left", expand=True, fill="x", padx=5)
+
+        btn_exclude = tk.Button(
+            controls,
+            text="예외 선택",
+            bg=THEME["text_dim"],
+            fg="white",
+            font=("Segoe UI", 12, "bold"),
+            relief="flat",
+            padx=10,
+            pady=10,
+            cursor="hand2",
+            command=self._show_excluded_window_selector,
+        )
+        btn_exclude.pack(side="left", expand=True, fill="x", padx=5)
 
         btn_stop = tk.Button(
             controls,
@@ -758,8 +773,8 @@ class SettingsGUI:
         # 1. 창 할당 메뉴
         menu.add_command(
             label=f"슬롯 {target_idx}에 창 할당...",
-            command=lambda: self._select_window_popup(
-                target_idx, event.x_root, event.y_root
+            command=lambda: WindowSelector(
+                self.root, tracker, self.update_ui, self.set_status, target_idx
             ),
         )
         menu.add_command(
@@ -1069,10 +1084,21 @@ class SettingsGUI:
 
     def hide(self):
         if self.root:
-            self.root.withdraw()
+            choice = messagebox.askyesnocancel(
+                "창 닫기",
+                "트레이로 이동하시겠습니까?\n\n"
+                "예: 트레이에서 백그라운드로 계속 실행\n"
+                "아니오: 프로그램 완전히 종료",
+            )
+            if choice is True:
+                self.root.withdraw()
+            elif choice is False:
+                self.quit()
+            # 취소(None)면 아무것도 하지 않음
 
     def _auto_fill(self):
-        count = self.tracker.auto_fill_all_slots()
+        excluded = self.config.get("excluded_windows", [])
+        count = self.tracker.auto_fill_all_slots(excluded)
         self.update_ui()
         self.set_status(f"● {count}개 슬롯 자동 할당됨", "success")
 
@@ -1287,9 +1313,8 @@ class SettingsGUI:
         if not val:
             return
         target_slot = int(val[0])
-        self._select_window_popup(
-            target_slot, self.root.winfo_rootx(), self.root.winfo_rooty()
-        )
+        tracker = self._get_current_tracker()
+        WindowSelector(self.root, tracker, self.update_ui, self.set_status, target_slot)
 
     def _toggle_slot_lock(self):
         """선택된 슬롯의 고정 상태 토글"""
@@ -1349,14 +1374,17 @@ class SettingsGUI:
             "   - 프로그램은 우측 '창 배정 기록'에 등록된 창들만 관리합니다.\n"
             "   - 등록되지 않은 창은 타일링되지 않으며, 마우스 조작에 영향을 받지 않습니다.\n"
             "   - 다음 방법으로 창을 배정(등록)할 수 있습니다:\n"
-            "     ① [자동 지정]: 현재 켜진 모든 창을 빈 슬롯에 자동으로 채웁니다.\n"
-            "     ② [선택 지정]: 목록에서 원하는 창을 순서대로 직접 선택하여 채웁니다.\n"
-            "     ③ 캔버스 우클릭: 미리보기의 특정 슬롯을 우클릭하여 개별 지정합니다.\n\n"
+            "     ① [자동 지정]: 현재 켜진 모든 창을 메인을 우선적으로 빈 슬롯에 자동으로 채웁니다.\n"
+            "        - '예외 선택' 버튼으로 자동 지정에서 제외할 창을 선택할 수 있습니다.\n"
+            "     ② [선택 자동 지정]: 목록에서 원하는 창을 직접 선택하여 자동으로 배정합니다.\n"
+            "     ③ 우클릭: 미리보기 또는 창 배정 기록에서 특정 슬롯을 우클릭하여 개별 지정합니다.\n\n"
             "2. 창 배정 해제\n"
             "   - 우측 '창 배정 기록' 목록에서 항목을 더블 클릭하면 창 배정이 해제됩니다.\n\n"
             "3. 고정 / 덮개 토글 (더블클릭)\n"
             "   - '고정' 컬럼 더블클릭: 해당 슬롯을 고정/해제합니다.\n"
             "   - '덮개' 컬럼 더블클릭: 덮개 표시를 켜기/끄기합니다.\n"
+            "   - 덮개는 사이드 슬롯 위에 투명한 레이어를 생성하여,\n"
+            "     스왑 시 메인으로 이동하는 화면이 잘못 클릭되는 것을 방지합니다.\n"
             "   - 고정된 슬롯은 메인 슬롯과 스왑되지 않습니다.\n\n"
             "4. 드래그 앤 드롭으로 슬롯 스왑\n"
             "   - '창 배정 기록'에서 항목을 드래그하여 다른 슬롯으로 이동하면 창이 스왑됩니다.\n"
@@ -1367,14 +1395,14 @@ class SettingsGUI:
             "   - [오른쪽 클릭]하면 두 슬롯을 하나로 합치거나 초기화할 수 있습니다.\n"
             "   - ⚠️ 주의: 슬롯 크기를 너무 작게 조절하면 창이 제대로 표시되지 않을 수 있습니다.\n\n"
             "6. 창 전환(스왑) 조작법\n"
-            "   - 'MAIN 슬롯'이 아닌 보조 슬롯의 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
+            "   - 'MAIN 슬롯'이 아닌 사이드 슬롯의 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
             "   - 클릭 즉시 MAIN 슬롯과 자리가 부드럽게 교체됩니다.\n"
             "   - (이때 투명 덮개는 타일러에 등록된 창에만 적용되므로, 다른 일반 창의 조작을 방해하지 않습니다.)\n\n"
             "7. 단축키 (핫키) 토글 기능\n"
             "   - 설정된 단축키(기본 Ctrl+Shift+T)로 타일링 동작을 즉시 켜고 끌 수 있습니다.\n"
             "   - 좌측 '단축키' 입력 칸을 클릭하고, 원하는 키를 직접 눌러서 변경할 수 있습니다.\n\n"
             "8. 시스템 트레이 (백그라운드 동작)\n"
-            "   - 설정창을 'X'로 닫아도 우측 하단 시스템 트레이에서 계속 실행됩니다.\n"
+            "   - 설정창을 'X'로 닫으면 트레이로 이동할지 완전 종료할지 선택합니다.\n"
             "   - 트레이 아이콘 우클릭 메뉴로 설정창 열기, 타일링 토글, 완전 종료가 가능합니다."
         )
         messagebox.showinfo("Window Tiler 사용 방법", help_text)
@@ -1382,3 +1410,15 @@ class SettingsGUI:
     def _show_window_selector(self):
         """창 목록 선택 다이얼로그 열기"""
         WindowSelector(self.root, self.tracker, self.update_ui, self.set_status)
+
+    def _show_excluded_window_selector(self):
+        """자동 지정 시 제외할 창 선택 다이얼로그 열기"""
+        excluded = self.config.get("excluded_windows", [])
+
+        def on_apply(selected_titles):
+            self.config["excluded_windows"] = selected_titles
+            save_config(self.config)
+            count = len(selected_titles)
+            self.set_status(f"● {count}개 창이 자동 지정에서 제외됩니다.", "success")
+
+        ExcludedWindowSelector(self.root, excluded, on_apply)
