@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, Listbox, Scrollbar, MULTIPLE
-import win32gui
-import win32api
-import win32con
-from .win_utils import get_all_monitors, get_window_list, move_window_precision
-from .win_utils import get_window_list
-from .app_config import save_config, save_profiles, load_profiles
+from tkinter import ttk, messagebox
+
+from .app_config import save_config
 from .gui.theme import THEME, setup_styles
-from .gui.window_selector import WindowSelector
-from .gui.excluded_window_selector import ExcludedWindowSelector
+from .gui.preview_canvas import PreviewCanvas
 from .gui.slot_tree import SlotTreeView
+from .gui.window_selector import WindowSelector
+from .gui.components.profile_panel import ProfilePanel
+from .gui.components.split_panel import SplitPanel, NumericalInputsPanel
+from .gui.components.control_panel import ControlPanel
 
 
 class SettingsGUI:
+    # [이해 포인트] SettingsGUI 클래스는 메인 설정 화면을 구성하고 컴포넌트들을 조율하는 역할을 담당합니다.
     def __init__(
         self,
         config,
@@ -23,6 +23,7 @@ class SettingsGUI:
         stop_callback,
         update_hotkey_callback=None,
     ):
+        # [핵심 로직] 외부에서 주입된 앱 설정(config), 프로필 목록, 트래커(창 제어 객체) 및 제어용 콜백 함수들을 저장합니다.
         self.config = config
         self.profiles = profiles
         self.tracker = tracker
@@ -32,260 +33,95 @@ class SettingsGUI:
 
         self.profile_modified = False
 
+        # [이해 포인트] 초기화 단계에서는 UI 컴포넌트들을 None으로 선언해 두고, 실제로 화면이 표시될 때(show) 객체들을 생성합니다.
         self.root = None
         self.preview_canvas = None
-        self.v_scroll_frame = None
-        self.h_scroll_frame = None
-        self.mon_combo = None
-        self.prof_combo = None
-        self.tree = None
-        self.status_label = None
-        self.hover_split = None
-        self.gap_var = None
-        self.btn_interactive = None
-
-        # Drag State
-        self.dragging_split = None
-        self.hover_split = None
-
-        # Checkbox State
-        self._checkbox_frame = None
-        self._locked_vars = {}
-        self._overlay_vars = {}
-        self._checkbox_rows = {}
-
-        # UI Styles
-        self.style = None
+        self.profile_panel = None
+        self.split_panel = None
+        self.numerical_inputs_panel = None
+        self.control_panel = None
+        self.slot_tree = None
 
     def show(self):
+        # [안전 장치] 창이 이미 화면에 존재하고 파괴되지 않았는지(winfo_exists) 확인하여 중복 생성을 방지합니다.
         if self.root and self.root.winfo_exists():
-            self.root.deiconify()
+            self.root.deiconify()  # [핵심 로직] 숨겨져 있던 창을 다시 사용자 화면에 표시합니다.
         else:
-            self._create_ui()
-
-        self.update_ui()  # 창을 보여줄 때 항상 최신 데이터로 갱신
+            self._create_ui()  # 창이 존재하지 않으면 새롭게 UI를 구성합니다.
+        self.update_ui()
 
     def _create_ui(self):
+        # [안전 장치] 혹시라도 메서드가 중복 호출되었을 때 창이 이미 있으면 초기화 과정을 건너뜁니다.
         if self.root and self.root.winfo_exists():
             return
 
+        # [핵심 로직] Tkinter의 최상위 메인 윈도우(root) 객체를 생성하고 제목을 설정합니다.
         self.root = tk.Tk()
         self.root.title("Window Tiler")
-        self.root.protocol("WM_DELETE_WINDOW", self.hide)
 
+        # [위험] 창 우상단의 X 버튼(닫기)을 눌렀을 때 프로그램이 바로 종료되는 것을 막고 커스텀 함수(hide)를 실행합니다.
+        self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self.style = setup_styles(self.root)
 
-        # 전체 화면 배경 (margin 역할)
         bg_frame = ttk.Frame(self.root, style="Bg.TFrame", padding=40)
         bg_frame.pack(fill="both", expand=True)
 
-        # 중앙 컨테이너 (.container 역할 - 둥근 모서리 느낌을 위해 테두리/패딩 부여)
         container = ttk.Frame(bg_frame, style="Container.TFrame", padding=30)
         container.pack(fill="both", expand=True)
 
-        self.root.protocol("WM_DELETE_WINDOW", self.hide)
+        # [이해 포인트] 사용자가 창을 최소화하는 등의 동작으로 창이 가려질 때('<Unmap>')의 이벤트를 바인딩하여 처리합니다.
         self.root.bind("<Unmap>", self._on_unmap)
 
-        # 1. Title (H1)
-        title_lbl = ttk.Label(container, text="WINDOW TILER", style="Header.TLabel")
-        title_lbl.pack(pady=(0, 20))
-
-        # 설정 영역 (콤보박스)
-        cfg_frame = ttk.Frame(container, style="Container.TFrame")
-        cfg_frame.pack(fill="x", pady=(0, 15))
-
-        ttk.Label(cfg_frame, text="모니터:", style="Container.TLabel").pack(
-            side="left", padx=(0, 5)
-        )
-        self.mon_combo = ttk.Combobox(cfg_frame, state="readonly", width=15)
-        self.mon_combo.pack(side="left", padx=(0, 15))
-
-        ttk.Label(cfg_frame, text="프로필:", style="Container.TLabel").pack(
-            side="left", padx=(0, 5)
-        )
-        self.prof_combo = ttk.Combobox(cfg_frame, state="readonly", width=12)
-        self.prof_combo.pack(side="left", padx=(0, 5))
-        ttk.Button(cfg_frame, text="+", width=2, command=self._add_profile).pack(
-            side="left", padx=1
-        )
-        ttk.Button(
-            cfg_frame, text="저장", width=4, command=self._save_current_profile
-        ).pack(side="left", padx=1)
-        ttk.Button(cfg_frame, text="삭제", width=4, command=self._delete_profile).pack(
-            side="left", padx=1
+        # 1. Title
+        ttk.Label(container, text="WINDOW TILER", style="Header.TLabel").pack(
+            pady=(0, 20)
         )
 
-        self.status_label = tk.Label(
-            cfg_frame,
-            text="○ 대기 중",
-            fg=THEME["text_dim"],
-            bg=THEME["surface"],
-            font=("Segoe UI", 9, "bold"),
-        )
-        self.status_label.pack(side="right")
+        # 2. Profile / Monitor Selector (Top)
+        # [이해 포인트] 각 패널을 생성할 때 자기 자신(app=self)을 넘겨주어 패널에서 메인 GUI의 변수나 함수에 접근하게 합니다.
+        self.profile_panel = ProfilePanel(container, app=self)
+        self.profile_panel.pack(fill="x", pady=(0, 15))
 
-        # 메인 2단 구조 컨테이너
+        # Main Panes
         main_pane = ttk.Frame(container, style="Container.TFrame")
         main_pane.pack(fill="both", expand=True, pady=(0, 10))
 
-        # 좌측 패널 (미리보기 + 분할설정 + 컨트롤)
         left_pane = ttk.Frame(main_pane, style="Container.TFrame")
         left_pane.pack(side="left", fill="y", padx=(0, 30))
 
-        # 우측 패널 (창 배정 기록)
         right_pane = ttk.Frame(main_pane, style="Container.TFrame")
         right_pane.pack(side="left", fill="both", expand=True)
 
-        # 2. Canvas Layout Preview (좌측 최상단)
-        self.preview_canvas = tk.Canvas(
+        # 3. Canvas Layout Preview (Left Top)
+        self.preview_canvas = PreviewCanvas(
             left_pane,
+            tracker=self.tracker,
+            config=self.config,
+            profiles=self.profiles,
+            on_layout_update=self.request_layout_update,
+            on_profile_modified=self.mark_profile_modified,
+            on_save_config=self.save_config,
+            on_status_update=self.set_status,
+            on_show_window_selector=self._show_window_selector_wrapper,
             width=540,
             height=300,
-            bg="#0a0a0e",
-            highlightthickness=2,
-            highlightbackground=THEME["accent"],
-            cursor="arrow",
         )
         self.preview_canvas.pack(pady=(0, 10))
-        self.preview_canvas.bind("<Button-1>", self._on_canvas_press)
-        self.preview_canvas.bind("<B1-Motion>", self._on_canvas_drag)
-        self.preview_canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
-        self.preview_canvas.bind("<Motion>", self._on_canvas_motion)
-        self.preview_canvas.bind("<Button-3>", self._on_canvas_right_click)
 
-        split_btn_p = ttk.Frame(left_pane, style="Container.TFrame")
-        split_btn_p.pack(fill="x", pady=(0, 10))
+        # 4. Split Editor Panel
+        self.split_panel = SplitPanel(left_pane, app=self)
+        self.split_panel.pack(fill="x", pady=(0, 10))
 
-        # 간격
-        ttk.Label(split_btn_p, text="간격:", style="Container.TLabel").pack(side="left")
-        self.gap_var = tk.StringVar(value=str(self.config.get("gap", 0)))
-        gap_e = ttk.Entry(split_btn_p, textvariable=self.gap_var, width=5)
-        gap_e.pack(side="left", padx=5)
-        gap_e.bind("<Return>", lambda e: self._on_gap_change())
+        self.numerical_inputs_panel = NumericalInputsPanel(left_pane, app=self)
+        self.numerical_inputs_panel.pack(fill="x", pady=(0, 25))
 
-        # 핫키
-        ttk.Label(split_btn_p, text="단축키:", style="Container.TLabel").pack(
-            side="left", padx=(10, 0)
-        )
-        self.hotkey_var = tk.StringVar(value=self.config.get("hotkey", "Ctrl+Shift+T"))
-        self.hotkey_entry = ttk.Entry(
-            split_btn_p, textvariable=self.hotkey_var, width=12, state="readonly"
-        )
-        self.hotkey_entry.pack(side="left", padx=5)
-        self.hotkey_entry.bind("<Button-1>", self._start_hotkey_capture)
-        self.hotkey_entry.bind("<Return>", lambda e: self._on_hotkey_change())
-        self._capturing_hotkey = False
+        # 5. Controls Panel
+        self.control_panel = ControlPanel(left_pane, app=self)
+        self.control_panel.pack(fill="x")
 
-        ttk.Button(split_btn_p, text="+ 세로 분할", command=self._add_v_split).pack(
-            side="right", padx=2
-        )
-        ttk.Button(split_btn_p, text="+ 가로 분할", command=self._add_h_split).pack(
-            side="right", padx=2
-        )
-        ttk.Button(split_btn_p, text="초기화", command=self._reset_splits).pack(
-            side="right", padx=2
-        )
-
-        # 정밀 수치 조정 영역 (미리보기 아래로 끌어올림)
-        num_card = ttk.Frame(left_pane, style="Container.TFrame")
-        num_card.pack(fill="x", pady=(0, 25))
-        self.v_scroll_frame = ttk.Frame(num_card, style="Container.TFrame")
-        self.v_scroll_frame.pack(side="top", fill="x")
-        self.h_scroll_frame = ttk.Frame(num_card, style="Container.TFrame")
-        self.h_scroll_frame.pack(side="top", fill="x", pady=2)
-
-        # 3. Controls (Buttons - 스톱워치 스타일) (좌측 하단)
-        controls = ttk.Frame(left_pane, style="Container.TFrame")
-        controls.pack(fill="x")
-
-        btn_start = tk.Button(
-            controls,
-            text="시작",
-            bg=THEME["accent"],
-            fg="#1a1a2e",
-            font=("Segoe UI", 12, "bold"),
-            relief="flat",
-            padx=20,
-            pady=10,
-            cursor="hand2",
-            command=self.start_callback,
-        )
-        btn_start.pack(side="left", expand=True, fill="x", padx=5)
-
-        btn_auto = tk.Button(
-            controls,
-            text="자동 지정",
-            bg=THEME["warning"],
-            fg="#1a1a2e",
-            font=("Segoe UI", 12, "bold"),
-            relief="flat",
-            padx=10,
-            pady=10,
-            cursor="hand2",
-            command=self._auto_fill,
-        )
-        btn_auto.pack(side="left", expand=True, fill="x", padx=5)
-
-        btn_select = tk.Button(
-            controls,
-            text="선택 자동 지정",
-            bg=THEME["warning"],
-            fg="#1a1a2e",
-            font=("Segoe UI", 12, "bold"),
-            relief="flat",
-            padx=10,
-            pady=10,
-            cursor="hand2",
-            command=self._show_window_selector,
-        )
-        btn_select.pack(side="left", expand=True, fill="x", padx=5)
-
-        btn_exclude = tk.Button(
-            controls,
-            text="예외 선택",
-            bg=THEME["text_dim"],
-            fg="white",
-            font=("Segoe UI", 12, "bold"),
-            relief="flat",
-            padx=10,
-            pady=10,
-            cursor="hand2",
-            command=self._show_excluded_window_selector,
-        )
-        btn_exclude.pack(side="left", expand=True, fill="x", padx=5)
-
-        btn_stop = tk.Button(
-            controls,
-            text="중지 (Stop)",
-            bg=THEME["error"],
-            fg="white",
-            font=("Segoe UI", 12, "bold"),
-            relief="flat",
-            padx=20,
-            pady=10,
-            cursor="hand2",
-            command=self.stop_callback,
-        )
-        btn_stop.pack(side="left", expand=True, fill="x", padx=5)
-
-        btn_help = tk.Button(
-            controls,
-            text="도움말",
-            bg="#444444",
-            fg="white",
-            font=("Segoe UI", 12, "bold"),
-            relief="flat",
-            padx=10,
-            pady=10,
-            cursor="hand2",
-            command=self._show_help,
-        )
-        btn_help.pack(side="left", padx=5)
-
-        # 4. Laps (Treeview) (우측)
+        # 6. Slot Tree (Right)
         laps_frame = ttk.Frame(right_pane, style="Container.TFrame")
         laps_frame.pack(fill="both", expand=True)
-
         ttk.Label(
             laps_frame,
             text="창 배정 기록 (Laps)",
@@ -297,759 +133,65 @@ class SettingsGUI:
             laps_frame,
             self.tracker,
             self.update_ui,
-            gui_callbacks={
-                "on_right_click": self._on_tree_right_click,
-            },
+            gui_callbacks={"on_right_click": self._on_tree_right_click},
         )
 
-        self._update_monitors()
-        self.mon_combo.bind("<<ComboboxSelected>>", self._on_monitor_change)
-        self._update_profile_combo()
-        self.prof_combo.bind("<<ComboboxSelected>>", self._on_profile_change)
-
-        # 최초 UI 생성 시 한 번 전체 업데이트
         self.update_ui()
 
     def set_status(self, text, status_type="info"):
-        if not self.status_label:
-            return
+        # [안전 장치] profile_panel 객체가 존재하는지 검사한 후 상태 메세지를 전달하여 프로그램 크래시를 막습니다.
+        if self.profile_panel:
+            self.profile_panel.set_status(text, status_type)
 
-        color = THEME["text_dim"]
-        prefix = "○"
+    def mark_profile_modified(self):
+        # [이해 포인트] 프로필에 변경사항이 발생했음을 플래그(profile_modified)로 기록하고 관련 콤보박스 UI를 갱신합니다.
+        self.profile_modified = True
+        if self.profile_panel:
+            self.profile_panel.update_profile_combo_display()
 
-        if status_type == "success":
-            color = THEME["success"]
-            prefix = "●"
-        elif status_type == "error":
-            color = THEME["error"]
-            prefix = "×"
-        elif status_type == "warning":
-            color = THEME["warning"]
-            prefix = "!"
-
-        self.status_label.config(text=f"{prefix} {text}", fg=color)
-
-    def _get_mon_cfg(self):
-        return self.config
-
-    def _get_current_mon_idx(self):
-        try:
-            val = self.mon_combo.get()
-            return (
-                int(val.split(":")[0]) if val else self.config.get("monitor_index", 0)
-            )
-        except:
-            return self.config.get("monitor_index", 0)
-
-    def _get_current_tracker(self):
-        return self.tracker
-
-    def _on_monitor_change(self, event):
-        idx = self._get_current_mon_idx()
-        self.config["monitor_index"] = idx
-        self.tracker.monitor_index = idx
-        self.tracker.update_layout()
-        self._update_profile_combo()
-        self.update_ui()
+    def save_config(self):
+        # [핵심 로직] 현재 변경된 환경설정 내용(config)을 디스크 파일에 영구적으로 저장합니다.
         save_config(self.config)
-        if self.tracker.monitor_info:
-            self._show_monitor_overlay(idx, self.tracker.monitor_info)
 
-    def _update_monitors(self):
-        monitors = get_all_monitors()
-        self.mon_combo["values"] = [f"{i}: {m['name']}" for i, m in enumerate(monitors)]
-        curr = self.config.get("monitor_index", 0)
-        if curr < len(monitors):
-            self.mon_combo.current(curr)
-        else:
-            self.mon_combo.current(0) if monitors else None
-
-    def _update_profile_combo(self):
-        names = list(self.profiles.keys())
-        self.prof_combo["values"] = names
-        curr = self.config.get("profile", "기본")
-        if curr in names:
-            self.prof_combo.set(curr)
-        else:
-            self.prof_combo.current(0) if names else None
-
-        self.profile_modified = False
-        self._update_profile_combo_display()
-
-    def _on_profile_change(self, event):
-        if self.profile_modified:
-            if not messagebox.askyesno(
-                "변경사항 저장",
-                "저장되지 않은 변경사항이 있습니다. 저장하지 않고 전환하시겠습니까?",
-                parent=self.root,
-            ):
-                # 취소 시 콤보박스 선택 원상 복구
-                self.prof_combo.set(self.config.get("profile", "기본"))
-                return
-
-        # 디스크에서 원본 프로필을 다시 로드 (tracker가 참조하는 self.profiles를 교체)
-        self.profiles.clear()
-        self.profiles.update(load_profiles())
-
-        name = self.prof_combo.get().strip("*")
-        self.config["profile"] = name
-
-        # 레이아웃 갱신 요청
-        self._request_layout_update(reposition=True)
-
-        save_config(self.config)
-        self.profile_modified = False
-        self._update_profile_combo_display()
-
-    def _add_profile(self):
-        name = simpledialog.askstring(
-            "새 프로필",
-            "수정된 현재 레이아웃을 저장할 이름을 입력하세요:",
-            parent=self.root,
-        )
-        if name:
-            if name in self.profiles:
-                messagebox.showwarning("오류", "이미 존재하는 이름입니다.")
-                return
-            # 현재 트래커가 사용 중인 실제 split 수치들을 프로필로 복사
-            profile_name = self.config.get("profile", "기본")
-            curr_profile = self.profiles.get(profile_name, self.profiles["기본"])
-            self.profiles[name] = {
-                "horizontal": list(curr_profile.get("horizontal", [])),
-                "vertical": list(curr_profile.get("vertical", [])),
-                "main_slot_index": self.config.get("main_slot_index", 0),
-            }
-            self.config["profile"] = name
-            # 새 프로필 추가는 즉시 저장
-            save_profiles(self.profiles)
-            save_config(self.config)
-            self._update_profile_combo()
-            self.profile_modified = False
-            self._update_profile_combo_display()
-            messagebox.showinfo("성공", f"'{name}' 프로필이 추가되었습니다.")
-
-    def _save_current_profile(self):
-        save_profiles(self.profiles)
-        self.profile_modified = False
-        self._update_profile_combo_display()
-        self.set_status("● 프로필이 저장되었습니다.", "success")
-
-    def _delete_profile(self):
-        name = self.config.get("profile")
-        if name == "기본":
-            messagebox.showwarning("오류", "'기본' 프로필은 삭제할 수 없습니다.")
-            return
-        if messagebox.askyesno("삭제 확인", f"'{name}' 프로필을 삭제하시겠습니까?"):
-            del self.profiles[name]
-            self.config["profile"] = "기본"
-            # 삭제는 즉시 저장
-            save_profiles(self.profiles)
-            save_config(self.config)
-            self._update_profile_combo()
-            self._on_profile_change(None)
-            self.profile_modified = False
-            self._update_profile_combo_display()
-
-    def _on_canvas_press(self, event):
-        if self.hover_split:
-            self.dragging_split = self.hover_split
-            return
-        tracker = self._get_current_tracker()
-        if not tracker:
-            return
-        for i, slot in enumerate(tracker.slot_rects):
-            x1, y1, x2, y2 = self._get_canvas_coords(i)
-            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
-                cfg = self._get_mon_cfg()
-                cfg["main_slot_index"] = i
-                tracker.update_layout()
-                self.update_ui()
-                save_config(self.config)  # 메인 슬롯 변경은 즉시 저장
-                self._show_slot_overlay(i, tracker)
-                break
-
-    def _on_canvas_motion(self, event):
-        if self.dragging_split:
-            return
-        cfg = self._get_mon_cfg()
-        if not cfg:
-            return
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        mx, my = event.x, event.y
-        match_found = None
-        for i, val in enumerate(p.get("vertical", [])):
-            vx, _ = self._ratio_to_canvas(val, 0)
-            if abs(mx - vx) < 6:
-                match_found = {"type": "v", "index": i}
-                self.preview_canvas.config(cursor="sb_h_double_arrow")
-                break
-        if not match_found:
-            for i, val in enumerate(p.get("horizontal", [])):
-                _, hy = self._ratio_to_canvas(0, val)
-                if abs(my - hy) < 6:
-                    match_found = {"type": "h", "index": i}
-                    self.preview_canvas.config(cursor="sb_v_double_arrow")
-                    break
-        if not match_found:
-            self.preview_canvas.config(cursor="arrow")
-        self.hover_split = match_found
-
-    def _on_canvas_drag(self, event):
-        if not self.dragging_split:
-            return
-        stype, idx = self.dragging_split["type"], self.dragging_split["index"]
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        rx, ry = self._canvas_to_ratio(event.x, event.y)
-        if stype == "v":
-            p["vertical"][idx] = rx
-            p["vertical"].sort()
-        else:
-            p["horizontal"][idx] = ry
-            p["horizontal"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
+    def request_layout_update(self, reposition=False):
+        # [핵심 로직] 트래커에 전체 창 레이아웃 갱신을 요청하고, reposition이 참이면 화면상에 창들을 다시 정렬시킵니다.
+        if self.tracker:
+            self.tracker.update_layout()
+            if reposition:
+                self.tracker.reposition_all()
         self.update_ui()
-
-    def _on_canvas_release(self, event):
-        if self.dragging_split:
-            self.dragging_split = None
-            self._request_layout_update(reposition=True)
-
-    def _add_v_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("vertical", []).append(0.5)
-        p["vertical"].sort()
-        self._request_layout_update()
-
-    def _add_h_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("horizontal", []).append(0.5)
-        p["horizontal"].sort()
-        self._request_layout_update()
-
-    def _reset_splits(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p["horizontal"] = []
-        p["vertical"] = [0.33, 0.67]
-        self._request_layout_update()
-
-    def _add_v_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("vertical", []).append(0.5)
-        p["vertical"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _add_h_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("horizontal", []).append(0.5)
-        p["horizontal"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _reset_splits(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p["horizontal"] = []
-        p["vertical"] = [0.33, 0.67]
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _reset_splits(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p["horizontal"] = []
-        p["vertical"] = [0.33, 0.67]
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _add_h_split(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p.setdefault("horizontal", []).append(0.5)
-        p["horizontal"].sort()
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _on_manual_split_change(self, stype, index, entry_var):
-        try:
-            val = float(entry_var.get())
-            if 0 < val < 1:
-                cfg = self._get_mon_cfg()
-                p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-                if stype == "v":
-                    p["vertical"][index] = val
-                    p["vertical"].sort()
-                else:
-                    p["horizontal"][index] = val
-                    p["horizontal"].sort()
-                tracker = self._get_current_tracker()
-                if tracker:
-                    tracker.update_layout()
-                    tracker.reposition_all()
-                self.update_ui()
-            self.profile_modified = True
-            self._update_profile_combo_display()
-        except ValueError:
-            pass
-
-    def _remove_split(self, stype, index):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        if stype == "v":
-            if index < len(p["vertical"]):
-                del p["vertical"][index]
-        else:
-            if index < len(p["horizontal"]):
-                del p["horizontal"][index]
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-            tracker.reposition_all()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _update_numerical_inputs(self):
-        if not self.v_scroll_frame:
-            return
-        for child in self.v_scroll_frame.winfo_children():
-            child.destroy()
-        for child in self.h_scroll_frame.winfo_children():
-            child.destroy()
-
-        cfg = self._get_mon_cfg()
-        if not cfg:
-            return
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-
-        ttk.Label(self.v_scroll_frame, text=" 세로선: ", style="Dim.TLabel").pack(
-            side="left", padx=(0, 5)
-        )
-        for i, val in enumerate(p.get("vertical", [])):
-            var = tk.StringVar(value=f"{val:.3f}")
-            f = ttk.Frame(self.v_scroll_frame, style="Card.TFrame")
-            f.pack(side="left", padx=2)
-            e = ttk.Entry(f, textvariable=var, width=6, font=("Segoe UI", 9))
-            e.pack(side="left")
-            e.bind(
-                "<Return>",
-                lambda evt, s="v", idx=i, v=var: self._on_manual_split_change(
-                    s, idx, v
-                ),
-            )
-            ttk.Button(
-                f,
-                text="×",
-                width=2,
-                command=lambda s="v", idx=i: self._remove_split(s, idx),
-            ).pack(side="left", padx=(1, 0))
-
-        ttk.Label(self.h_scroll_frame, text=" 가로선: ", style="Dim.TLabel").pack(
-            side="left", padx=(0, 5)
-        )
-        for i, val in enumerate(p.get("horizontal", [])):
-            var = tk.StringVar(value=f"{val:.3f}")
-            f = ttk.Frame(self.h_scroll_frame, style="Card.TFrame")
-            f.pack(side="left", padx=2)
-            e = ttk.Entry(f, textvariable=var, width=6, font=("Segoe UI", 9))
-            e.pack(side="left")
-            e.bind(
-                "<Return>",
-                lambda evt, s="h", idx=i, v=var: self._on_manual_split_change(
-                    s, idx, v
-                ),
-            )
-            ttk.Button(
-                f,
-                text="×",
-                width=2,
-                command=lambda s="h", idx=i: self._remove_split(s, idx),
-            ).pack(side="left", padx=(1, 0))
+        self.mark_profile_modified()
 
     def update_ui(self):
+        # [안전 장치] 캔버스가 초기화되기 전에 이 함수가 호출되는 것을 방지합니다.
         if not self.preview_canvas:
             return
-        self.preview_canvas.delete("all")
-        tracker = self._get_current_tracker()
-        cfg = self._get_mon_cfg()
-        if not tracker or not cfg:
-            return
 
-        main_idx = cfg.get("main_slot_index", 0)
-        # 슬롯 그리기
-        for i, slot in enumerate(tracker.slot_rects):
-            x1, y1, x2, y2 = self._get_canvas_coords(i)
-            is_main = i == main_idx
+        # [핵심 로직] 최신 상태의 트래커, 설정, 프로필 데이터를 각 UI 컴포넌트에 주입하고 다시 그리게 만듭니다.
+        self.preview_canvas.tracker = self.tracker
+        self.preview_canvas.config = self.config
+        self.preview_canvas.profiles = self.profiles
+        self.preview_canvas.update_drawing()
 
-            fill_color = (
-                THEME["surface"] if not is_main else "#004466"
-            )  # 명확한 Accent 기반 강조색
-            outline_color = THEME["accent"] if is_main else THEME["border"]
-            width = 3 if is_main else 1
+        if self.numerical_inputs_panel:
+            self.numerical_inputs_panel.update_inputs()
+        if self.slot_tree:
+            self.slot_tree.update()
 
-            self.preview_canvas.create_rectangle(
-                x1, y1, x2, y2, fill=fill_color, outline=outline_color, width=width
-            )
-
-            # 인덱스 및 MAIN 텍스트 추가
-            text_color = "white" if is_main else THEME["text_dim"]
-            display_text = f"{i}\nMAIN" if is_main else str(i)
-            font_style = (
-                ("Segoe UI", 14, "bold") if is_main else ("Segoe UI", 12, "bold")
-            )
-
-            self.preview_canvas.create_text(
-                (x1 + x2) / 2,
-                (y1 + y2) / 2,
-                text=display_text,
-                fill=text_color,
-                font=font_style,
-                justify="center",
-            )
-        # 분할선 그리기
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        # 모니터 영역의 시작과 끝점 계산
-        ox1, oy1 = self._ratio_to_canvas(0, 0)
-        ox2, oy2 = self._ratio_to_canvas(1, 1)
-
-        for v in p.get("vertical", []):
-            vx, _ = self._ratio_to_canvas(v, 0)
-            self.preview_canvas.create_line(
-                vx, oy1, vx, oy2, fill=THEME["accent"], width=1, dash=(2, 2)
-            )
-        for h in p.get("horizontal", []):
-            _, hy = self._ratio_to_canvas(0, h)
-            self.preview_canvas.create_line(
-                ox1, hy, ox2, hy, fill=THEME["accent"], width=1, dash=(2, 2)
-            )
-
-        self._update_numerical_inputs()
-        self.slot_tree.update()
-
-    def _on_canvas_right_click(self, event):
-        tracker = self._get_current_tracker()
-        if not tracker:
-            return
-        target_idx = -1
-        for i, slot in enumerate(tracker.slot_rects):
-            x1, y1, x2, y2 = self._get_canvas_coords(i)
-            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
-                target_idx = i
-                break
-        if target_idx == -1:
-            return
-
-        # 컨텍스트 메뉴 생성
-        menu = tk.Menu(self.root, tearoff=0)
-
-        # 1. 창 할당 메뉴
-        menu.add_command(
-            label=f"슬롯 {target_idx}에 창 할당...",
-            command=lambda: WindowSelector(
-                self.root, tracker, self.update_ui, self.set_status, target_idx
-            ),
+    def _show_window_selector_wrapper(self, target_idx):
+        # [이해 포인트] 다른 UI에서 호출하기 쉽게, 윈도우 선택기를 생성해주는 래퍼(Wrapper) 함수입니다.
+        WindowSelector(
+            self.root, self.tracker, self.update_ui, self.set_status, target_idx
         )
-        menu.add_command(
-            label="메인 슬롯으로 지정", command=lambda: self._set_main_slot(target_idx)
-        )
-        menu.add_separator()
-
-        # 2. 병합 관련 메뉴 (그리드 정보 필요)
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        num_cols = len(p.get("vertical", [])) + 1
-        num_rows = len(p.get("horizontal", [])) + 1
-
-        # 현재 슬롯이 어떤 베이스 인덱스들을 포함하는지 역산 (단순화를 위해 현재는 인덱스 기반 직접 병합 제안)
-        menu.add_command(
-            label="오른쪽 칸과 합치기",
-            command=lambda: self._merge_slots(target_idx, "right"),
-        )
-        menu.add_command(
-            label="아래쪽 칸과 합치기",
-            command=lambda: self._merge_slots(target_idx, "bottom"),
-        )
-        menu.add_command(
-            label="이 칸 병합 해제", command=lambda: self._unmerge_slot(target_idx)
-        )
-        menu.add_separator()
-        menu.add_command(label="모든 병합 초기화", command=self._reset_all_merges)
-
-        menu.post(event.x_root, event.y_root)
-
-    def _set_main_slot(self, idx):
-        cfg = self._get_mon_cfg()
-        cfg["main_slot_index"] = idx
-        self.tracker.update_layout()
-        self.update_ui()
-        save_config(self.config)
-
-    def _select_window_popup(self, target_slot, px, py):
-        tracker = self._get_current_tracker()
-        windows = get_window_list(tracker.monitor_info)
-        popup = tk.Toplevel(self.root)
-        popup.title("창 선택")
-        popup.attributes("-topmost", True)
-        popup.geometry(f"3000x450+{px}+{py}")  # 임시 크게
-        self._center_popup(popup, 300, 450)
-
-        lb = tk.Listbox(popup)
-        [lb.insert("end", t) for h, t in windows]
-        lb.pack(fill="both", expand=True, padx=5, pady=5)
-
-        def on_confirm():
-            sel = lb.curselection()
-            if sel:
-                hwnd, _ = windows[sel[0]]
-                for i, slot in enumerate(tracker.slots):
-                    if slot["hwnd"] == hwnd:
-                        tracker.slots[i]["hwnd"] = None
-                tracker.slots[target_slot]["hwnd"] = hwnd
-                tracker.reposition_all()
-                self.update_ui()
-                popup.destroy()
-
-        ttk.Button(popup, text="선택 완료", command=on_confirm).pack(
-            fill="x", padx=10, pady=5
-        )
-        lb.bind("<Double-1>", lambda e: on_confirm())
-
-    def _merge_slots(self, slot_idx, direction):
-        tracker = self._get_current_tracker()
-        slot = tracker.slot_rects[slot_idx]
-        base_indices = slot.get("base_indices", [slot_idx])
-
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        num_cols = len(p.get("vertical", [])) + 1
-
-        # 현재 슬롯의 경계에 인접한 베이스 인덱스 찾기
-        target2 = -1
-        if direction == "right":
-            # 모든 베이스 인덱스 중 오른쪽에 빈 칸이 있는 것 찾기
-            for b_idx in base_indices:
-                if (b_idx + 1) % num_cols != 0:  # 오른쪽 끝이 아님
-                    cand = b_idx + 1
-                    if cand not in base_indices:
-                        target2 = cand
-                        break
-        else:  # bottom
-            for b_idx in base_indices:
-                cand = b_idx + num_cols
-                # cand가 범위를 넘지 않고 현재 병합에 포함되지 않아야 함
-                if cand < (len(p.get("vertical", [])) + 1) * (
-                    len(p.get("horizontal", [])) + 1
-                ):
-                    if cand not in base_indices:
-                        target2 = cand
-                        break
-
-        if target2 != -1:
-            merges = p.get("merges", [])
-            # 기존 그룹이 있다면 합침, 없으면 새 그룹
-            new_group = set(base_indices + [target2])
-
-            # 기존 머지들 중 이들 중 하나라도 포함하는 그룹은 삭제 후 새 그룹으로 통합
-            updated_merges = []
-            for group in merges:
-                if any(idx in new_group for idx in group):
-                    new_group.update(group)
-                else:
-                    updated_merges.append(group)
-            updated_merges.append(list(new_group))
-
-            p["merges"] = updated_merges
-            self._request_layout_update()
-
-    def _remove_split(self, stype, index):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        if stype == "v":
-            if index < len(p["vertical"]):
-                del p["vertical"][index]
-        else:
-            if index < len(p["horizontal"]):
-                del p["horizontal"][index]
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-            tracker.reposition_all()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _unmerge_slot(self, slot_idx):
-        tracker = self._get_current_tracker()
-        slot = tracker.slot_rects[slot_idx]
-        base_indices = slot.get("base_indices", [slot_idx])
-
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        merges = p.get("merges", [])
-
-        # 이 슬롯의 베이스 인덱스들을 포함하는 모든 머지 그룹 삭제
-        p["merges"] = [g for g in merges if not any(idx in base_indices for idx in g)]
-        self._request_layout_update()
-
-    def _reset_all_merges(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p["merges"] = []
-        self._request_layout_update()
-
-    def _reset_all_merges(self):
-        cfg = self._get_mon_cfg()
-        p = self.profiles.get(cfg["profile"], self.profiles["기본"])
-        p["merges"] = []
-        self.tracker.update_layout()
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _update_profile_combo_display(self):
-        """콤보박스에 수정 상태(*)를 반영합니다."""
-        if not self.prof_combo:
-            return
-
-        current_name = self.config.get("profile", "기본")
-        display_name = f"{current_name}*" if self.profile_modified else current_name
-
-        current_values = list(self.prof_combo["values"])
-        try:
-            # Find the actual name (without *) to update it
-            real_name_index = -1
-            for i, v in enumerate(current_values):
-                if v.strip("*") == current_name:
-                    real_name_index = i
-                    break
-
-            if real_name_index != -1:
-                current_values[real_name_index] = display_name
-                self.prof_combo["values"] = current_values
-                self.prof_combo.set(display_name)
-            else:
-                self.prof_combo.set(display_name)
-        except tk.TclError:
-            self.prof_combo.set(display_name)
-
-    def _request_layout_update(self, reposition=False):
-        """레이아웃 변경 시 필요한 모든 UI 갱신 작업을 중앙에서 처리합니다."""
-        tracker = self._get_current_tracker()
-        if tracker:
-            tracker.update_layout()
-            if reposition:
-                tracker.reposition_all()
-
-        self.update_ui()
-        self.profile_modified = True
-        self._update_profile_combo_display()
-
-    def _get_canvas_coords(self, index):
-        tracker = self._get_current_tracker()
-        if not tracker or not tracker.monitor_info or index >= len(tracker.slot_rects):
-            return (0, 0, 0, 0)
-        rect, m = tracker.slot_rects[index]["rect"], tracker.monitor_info
-
-        cw, ch = 540, 300
-        scale = min(cw / m["width"], ch / m["height"]) * 0.95
-        draw_w, draw_h = m["width"] * scale, m["height"] * scale
-        ox, oy = (cw - draw_w) / 2, (ch - draw_h) / 2
-
-        x1, y1 = ox + (rect[0] - m["x"]) * scale, oy + (rect[1] - m["y"]) * scale
-        x2, y2 = x1 + rect[2] * scale, y1 + rect[3] * scale
-        return x1, y1, x2, y2
-
-    def _canvas_to_ratio(self, cx, cy):
-        # Convert canvas x, y back to 0.0~1.0 ratio
-        cw, ch = 540, 300
-        tracker = self._get_current_tracker()
-        if not tracker or not tracker.monitor_info:
-            return 0, 0
-        m = tracker.monitor_info
-        scale = min(cw / m["width"], ch / m["height"]) * 0.95
-        draw_w, draw_h = m["width"] * scale, m["height"] * scale
-        ox, oy = (cw - draw_w) / 2, (ch - draw_h) / 2
-
-        rx = (cx - ox) / draw_w
-        ry = (cy - oy) / draw_h
-        return max(0.01, min(0.99, rx)), max(0.01, min(0.99, ry))
-
-    def _ratio_to_canvas(self, rx, ry):
-        cw, ch = 540, 300
-        tracker = self._get_current_tracker()
-        if not tracker or not tracker.monitor_info:
-            return rx * cw, ry * ch
-        m = tracker.monitor_info
-        scale = min(cw / m["width"], ch / m["height"]) * 0.95
-        draw_w, draw_h = m["width"] * scale, m["height"] * scale
-        ox, oy = (cw - draw_w) / 2, (ch - draw_h) / 2
-
-        return ox + rx * draw_w, oy + ry * draw_h
-
-    # Old set_status removed (using line 214 version)
-
-    def _show_slot_overlay(self, index, tracker):
-        if not tracker or index >= len(tracker.slot_rects):
-            return
-        rect = tracker.slot_rects[index]["rect"]
-
-        overlay = tk.Toplevel(self.root)
-        overlay.overrideredirect(True)
-        # Windows 투명도 및 최상단 설정
-        overlay.attributes("-topmost", True, "-alpha", 0.7)
-        from src.gui.theme import THEME
-
-        overlay.configure(bg=THEME["accent"])
-
-        lbl = tk.Label(
-            overlay,
-            text=f" SLOT {index} ",
-            fg="#1a1a2e",
-            bg=THEME["accent"],
-            font=("Segoe UI", 48, "bold"),
-        )
-        lbl.place(relx=0.5, rely=0.5, anchor="center")
-
-        x, y, w, h = rect
-        overlay.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
-
-        # 1초 후 자동 제거
-        self.root.after(1000, overlay.destroy)
 
     def _show_monitor_overlay(self, index, monitor):
+        # [이해 포인트] 모니터를 식별하기 쉽게 화면 한가운데에 투명하고 큰 숫자 라벨을 임시 띄우는 창(Overlay)을 생성합니다.
         overlay = tk.Toplevel(self.root)
-        overlay.overrideredirect(True)
-        overlay.attributes("-topmost", True, "-alpha", 0.8)
+        overlay.overrideredirect(True)  # 운영체제 창 테두리 및 타이틀바를 숨깁니다.
+        overlay.attributes(
+            "-topmost", True, "-alpha", 0.8
+        )  # 항상 최상단 및 투명도를 설정합니다.
 
-        # 디자인 개선된 라벨
         lbl = tk.Label(
             overlay,
             text=f" MONITOR {index} ",
@@ -1064,25 +206,22 @@ class SettingsGUI:
 
         overlay.update_idletasks()
         w, h = lbl.winfo_reqwidth(), lbl.winfo_reqheight()
+
+        # [핵심 로직] 모니터의 X, Y 좌표 및 너비, 높이 중앙 값을 계산하여 오버레이 창 위치를 잡아줍니다.
         mx = monitor["x"] + (monitor["width"] - w) // 2
         my = monitor["y"] + (monitor["height"] - h) // 2
         overlay.geometry(f"{w}x{h}+{mx}+{my}")
 
-        # 1.2초 후 자동 제거 (조금 더 길게)
+        # [안전 장치] 타이머를 설정해 1200ms(1.2초)가 지나면 오버레이 창이 자동으로 삭제(destroy)되도록 합니다.
         self.root.after(1200, overlay.destroy)
 
-    def _center_popup(self, popup, width, height):
-        popup.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - width) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - height) // 2
-        popup.geometry(f"{width}x{height}+{x}+{y}")
-
     def _on_unmap(self, event):
-        # 루트 윈도우 자체가 unmap(최소화 등)될 때만 처리
+        # [위험] 창이 단순히 숨겨지는 상황을 감지하여 윈도우 작업을 취소(withdraw)하고 트레이 모드 전환 등에 대응합니다.
         if event.widget == self.root and self.root.state() == "iconified":
             self.root.withdraw()
 
     def hide(self):
+        # [위험] 메인 윈도우를 닫으려 할 때 완전 종료할 것인지, 트레이에서 백그라운드로 남겨둘 것인지 선택지를 제공합니다.
         if self.root:
             choice = messagebox.askyesnocancel(
                 "창 닫기",
@@ -1091,236 +230,74 @@ class SettingsGUI:
                 "아니오: 프로그램 완전히 종료",
             )
             if choice is True:
-                self.root.withdraw()
+                self.root.withdraw()  # [핵심 로직] 창을 숨기고 백그라운드로 전환합니다.
             elif choice is False:
-                self.quit()
-            # 취소(None)면 아무것도 하지 않음
-
-    def _auto_fill(self):
-        excluded = self.config.get("excluded_windows", [])
-        count = self.tracker.auto_fill_all_slots(excluded)
-        self.update_ui()
-        self.set_status(f"● {count}개 슬롯 자동 할당됨", "success")
-
-    def _on_gap_change(self):
-        try:
-            val = int(self.gap_var.get())
-            self.config["gap"] = val
-            self.tracker.update_layout()
-            self.update_ui()
-            self.tracker.reposition_all()
-            save_config(self.config)
-            self.set_status(f"● 간격 {val}px 적용됨", "success")
-        except ValueError:
-            messagebox.showwarning("오류", "숫자만 입력해 주세요.")
-
-    def _on_hotkey_change(self):
-        new_hotkey = self.hotkey_var.get().strip()
-        if not new_hotkey:
-            messagebox.showwarning("오류", "단축키를 입력해 주세요.")
-            return
-
-        if self.update_hotkey_callback:
-            try:
-                self.update_hotkey_callback(new_hotkey)
-                self.set_status(f"● 핫키 '{new_hotkey}' 적용됨", "success")
-            except Exception as e:
-                messagebox.showerror(
-                    "단축키 등록 오류", f"입력한 단축키 등록에 실패했습니다:\n{e}"
-                )
-
-    def _start_hotkey_capture(self, event):
-        """키 입력 캡처 모드 시작"""
-        if self._capturing_hotkey:
-            return
-
-        self._capturing_hotkey = True
-        self.hotkey_var.set("키를 눌러주세요...")
-        self.hotkey_entry.config(state="normal")
-        self.hotkey_entry.delete(0, tk.END)
-        self.hotkey_entry.focus_set()
-
-        # 키 이벤트 바인딩
-        self.hotkey_entry.bind("<KeyPress>", self._on_key_press)
-        self.hotkey_entry.bind("<KeyRelease>", self._on_key_release)
-
-        # 캡처 상태 표시
-        self.set_status("● 단축키 입력 대기 중...", "info")
-
-    def _on_key_press(self, event):
-        """키 입력 처리"""
-        if not self._capturing_hotkey:
-            return
-
-        # 특수 키 처리
-        key_symbols = {
-            "Control_L": "Ctrl",
-            "Control_R": "Ctrl",
-            "Shift_L": "Shift",
-            "Shift_R": "Shift",
-            "Alt_L": "Alt",
-            "Alt_R": "Alt",
-            "Win_L": "Win",
-            "Win_R": "Win",
-            "Return": "Enter",
-            "Escape": "Esc",
-            "space": "Space",
-            "Tab": "Tab",
-            "BackSpace": "Backspace",
-            "Delete": "Delete",
-            "Insert": "Insert",
-            "Home": "Home",
-            "End": "End",
-            "Prior": "PageUp",
-            "Next": "PageDown",
-            "Left": "Left",
-            "Right": "Right",
-            "Up": "Up",
-            "Down": "Down",
-        }
-
-        keysym = event.keysym
-        if keysym in key_symbols:
-            key_name = key_symbols[keysym]
-        elif len(keysym) == 1:
-            key_name = keysym.upper()
-        else:
-            key_name = keysym
-
-        modifier_order = ["Ctrl", "Shift", "Alt", "Win"]
-
-        current_str = self.hotkey_var.get()
-        if current_str == "키를 눌러주세요...":
-            current_keys = []
-        else:
-            current_keys = current_str.split("+")
-
-        if key_name in modifier_order:
-            if key_name not in current_keys:
-                current_keys.append(key_name)
-        else:
-            # 일반 키는 하나만 유지하고 기존 일반 키 교체
-            current_keys = [k for k in current_keys if k in modifier_order]
-            current_keys.append(key_name)
-
-        # Modifier 순서대로 정렬
-        mods = [k for k in modifier_order if k in current_keys]
-        non_mods = [k for k in current_keys if k not in modifier_order]
-
-        final_keys = mods + non_mods
-        self.hotkey_var.set("+".join(final_keys))
-
-        return "break"
-
-    def _on_key_release(self, event):
-        """키 릴리스 처리 - 입력 완료"""
-        if not self._capturing_hotkey:
-            return
-
-        # 잠시 후 입력 완료 처리
-        self.root.after(100, self._finish_hotkey_capture)
-        return "break"
-
-    def _finish_hotkey_capture(self):
-        """키 입력 캡처 완료"""
-        if not self._capturing_hotkey:
-            return
-
-        self._capturing_hotkey = False
-        hotkey_str = self.hotkey_var.get().strip()
-
-        # 유효성 검사
-        if hotkey_str and hotkey_str != "키를 눌러주세요...":
-            # 자동으로 적용 시도
-            if self.update_hotkey_callback:
-                try:
-                    self.update_hotkey_callback(hotkey_str)
-                    self.set_status(f"● 핫키 '{hotkey_str}' 적용됨", "success")
-                except Exception as e:
-                    messagebox.showerror(
-                        "단축키 등록 오류", f"입력한 단축키 등록에 실패했습니다:\n{e}"
-                    )
-                    self.hotkey_var.set(self.config.get("hotkey", "Ctrl+Shift+T"))
-            else:
-                self.hotkey_var.set(hotkey_str)
-        else:
-            self.hotkey_var.set(self.config.get("hotkey", "Ctrl+Shift+T"))
-
-        self.hotkey_entry.config(state="readonly")
-        # 키 이벤트 바인딩 해제
-        self.hotkey_entry.unbind("<KeyPress>")
-        self.hotkey_entry.unbind("<KeyRelease>")
-
-    # Removed unused _toggle_interactive
-
-    def loop(self):
-        """메인루프 실행 및 주기적 상태 체크 (Cycle 15)"""
-
-        def check_assignment_mode():
-            if not self.root:
-                return
-            if hasattr(self, "btn_interactive") and self.btn_interactive is not None:
-                # 엔진에서 지정이 끝났는데 UI는 아직 '지정 중'인 경우
-                try:
-                    if (
-                        not self.tracker.is_assignment_mode
-                        and self.btn_interactive.cget("text") != "클릭으로 지정 시작"
-                    ):
-                        self.btn_interactive.config(text="클릭으로 지정 시작")
-                        self.update_ui()
-                        self.set_status("● 모든 슬롯 지정 완료", "success")
-                except tk.TclError:
-                    pass
-            self.root.after(500, check_assignment_mode)
-
-        self.root.after(500, check_assignment_mode)
-        self.root.mainloop()
+                self.quit()  # [핵심 로직] 프로그램 완전 종료 루틴을 호출합니다.
 
     def quit(self):
+        # [위험] Tkinter의 메인루프를 중단(quit)하고 관련된 모든 창과 위젯 메모리를 해제(destroy)합니다.
         if self.root:
             self.root.quit()
             self.root.destroy()
 
+    def loop(self):
+        # [이해 포인트] 이 함수는 계속해서 자신을 재귀 호출(after)하여 앱의 지속적인 백그라운드 체크나 로직을 담당할 수 있는 타이머 기반 루프입니다.
+        def check_assignment_mode():
+            if not self.root:
+                return
+            self.root.after(500, check_assignment_mode)
+
+        # [핵심 로직] 0.5초(500ms) 뒤 check_assignment_mode 함수를 처음 시작하고, 화면의 메인 이벤트 처리 루프(mainloop)를 실행합니다.
+        self.root.after(500, check_assignment_mode)
+        self.root.mainloop()
+
+    # --- Tree View Context Menu Methods ---
     def _on_tree_right_click(self, event):
-        """창 배정 기록 우클릭 메뉴"""
+        # [이해 포인트] 트리 뷰 목록에서 마우스 우클릭을 했을 때 팝업되는 컨텍스트 메뉴를 띄우는 함수입니다.
         sel = self.slot_tree.tree.selection()
+        # [안전 장치] 선택한 아이템이 비어있다면 오류를 피하기 위해 바로 반환(return) 처리합니다.
         if not sel:
             return
         val = self.slot_tree.tree.item(sel[0], "values")
         idx = int(val[0])
-        tracker = self._get_current_tracker()
         is_locked = False
         overlay_enabled = True
-        if tracker and idx < len(tracker.slots):
-            is_locked = tracker.slots[idx].get("locked", False)
-            overlay_enabled = tracker.slots[idx].get("overlay_enabled", True)
+
+        # [안전 장치] 선택한 인덱스(idx)가 tracker의 슬롯 배열 크기를 넘어가지 않는지(IndexError 방지) 확인합니다.
+        if self.tracker and idx < len(self.tracker.slots):
+            is_locked = self.tracker.slots[idx].get("locked", False)
+            overlay_enabled = self.tracker.slots[idx].get("overlay_enabled", True)
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(
             label="창 할당...", command=self._assign_window_to_selected_slot
         )
         menu.add_separator()
-        lock_label = "고정 해제" if is_locked else "고정"
-        menu.add_command(label=lock_label, command=self._toggle_slot_lock)
-        overlay_label = "덮개 끄기" if overlay_enabled else "덮개 켜기"
-        menu.add_command(label=overlay_label, command=self._toggle_overlay)
+        menu.add_command(
+            label="고정 해제" if is_locked else "고정", command=self._toggle_slot_lock
+        )
+        menu.add_command(
+            label="덮개 끄기" if overlay_enabled else "덮개 켜기",
+            command=self._toggle_overlay,
+        )
         menu.add_command(label="창 할당 해제", command=self._unbind_selected_slot)
+
+        # [핵심 로직] 마우스를 우클릭한 화면 좌표(event.x_root, event.y_root)에 동적으로 만든 메뉴를 표시합니다.
         menu.post(event.x_root, event.y_root)
 
     def _assign_window_to_selected_slot(self):
-        """선택된 슬롯에 창을 할당"""
         sel = self.slot_tree.tree.selection()
         if not sel:
             return
         val = self.slot_tree.tree.item(sel[0], "values")
         if not val:
             return
-        target_slot = int(val[0])
-        tracker = self._get_current_tracker()
-        WindowSelector(self.root, tracker, self.update_ui, self.set_status, target_slot)
+        # [핵심 로직] 트리 뷰에서 선택된 특정 슬롯에 새 윈도우를 배정하기 위해 WindowSelector 대화상자를 오픈합니다.
+        WindowSelector(
+            self.root, self.tracker, self.update_ui, self.set_status, int(val[0])
+        )
 
     def _toggle_slot_lock(self):
-        """선택된 슬롯의 고정 상태 토글"""
         sel = self.slot_tree.tree.selection()
         if not sel:
             return
@@ -1328,16 +305,17 @@ class SettingsGUI:
         if not val:
             return
         idx = int(val[0])
-        tracker = self._get_current_tracker()
-        if tracker and idx < len(tracker.slots):
-            tracker.toggle_slot_lock(idx)
-            locked = tracker.slots[idx].get("locked", False)
-            status = "고정됨" if locked else "고정 해제됨"
-            self.set_status(f"● 슬롯 {idx} {status}", "info")
+        if self.tracker and idx < len(self.tracker.slots):
+            # [핵심 로직] 해당 슬롯의 잠금 상태(locked)를 토글(반전)시키고, 결과를 하단 상태 표시줄에 안내합니다.
+            self.tracker.toggle_slot_lock(idx)
+            locked = self.tracker.slots[idx].get("locked", False)
+            self.set_status(
+                f"● 슬롯 {idx} 고정됨" if locked else f"● 슬롯 {idx} 고정 해제됨",
+                "info",
+            )
             self.update_ui()
 
     def _toggle_overlay(self):
-        """선택된 슬롯의 덮개(overlay) 표시 토글"""
         sel = self.slot_tree.tree.selection()
         if not sel:
             return
@@ -1345,16 +323,19 @@ class SettingsGUI:
         if not val:
             return
         idx = int(val[0])
-        tracker = self._get_current_tracker()
-        if tracker and idx < len(tracker.slots):
-            tracker.toggle_overlay(idx)
-            overlay_enabled = tracker.slots[idx].get("overlay_enabled", True)
-            status = "덮개 켜짐" if overlay_enabled else "덮개 꺼짐"
-            self.set_status(f"● 슬롯 {idx} {status}", "info")
+        if self.tracker and idx < len(self.tracker.slots):
+            # [핵심 로직] 슬롯 덮개(Overlay) 표시를 켜거나 끄고, 그 상태 변화를 사용자에게 텍스트로 알립니다.
+            self.tracker.toggle_overlay(idx)
+            overlay_enabled = self.tracker.slots[idx].get("overlay_enabled", True)
+            self.set_status(
+                f"● 슬롯 {idx} 덮개 켜짐"
+                if overlay_enabled
+                else f"● 슬롯 {idx} 덮개 꺼짐",
+                "info",
+            )
             self.update_ui()
 
     def _unbind_selected_slot(self):
-        """선택된 슬롯의 창 할당 해제"""
         sel = self.slot_tree.tree.selection()
         if not sel:
             return
@@ -1362,66 +343,9 @@ class SettingsGUI:
         if not val:
             return
         idx = int(val[0])
-        tracker = self._get_current_tracker()
-        if tracker and idx < len(tracker.slots):
-            tracker.slots[idx]["hwnd"] = None
-            tracker.reposition_all()
+        if self.tracker and idx < len(self.tracker.slots):
+            # [핵심 로직] 선택된 슬롯이 관리하던 창 핸들(hwnd) 정보를 None으로 삭제하여 연결을 끊고 즉시 창들을 재정렬합니다.
+            self.tracker.slots[idx]["hwnd"] = None
+            self.tracker.reposition_all()
             self.update_ui()
             self.set_status(f"● 슬롯 {idx} 할당 해제됨", "info")
-
-    def _show_help(self):
-        """사용 방법 안내 팝업"""
-        help_text = (
-            "■ Window Tiler 사용 방법 안내 ■\n\n"
-            "1. 창 배정 원칙 (매우 중요!)\n"
-            "   - 프로그램은 우측 '창 배정 기록'에 등록된 창들만 관리합니다.\n"
-            "   - 등록되지 않은 창은 타일링되지 않으며, 마우스 조작에 영향을 받지 않습니다.\n"
-            "   - 다음 방법으로 창을 배정(등록)할 수 있습니다:\n"
-            "     ① [자동 지정]: 현재 켜진 모든 창을 메인을 우선적으로 빈 슬롯에 자동으로 채웁니다.\n"
-            "        - '예외 선택' 버튼으로 자동 지정에서 제외할 창을 선택할 수 있습니다.\n"
-            "     ② [선택 자동 지정]: 목록에서 원하는 창을 직접 선택하여 자동으로 배정합니다.\n"
-            "     ③ 우클릭: 미리보기 또는 창 배정 기록에서 특정 슬롯을 우클릭하여 개별 지정합니다.\n\n"
-            "2. 창 배정 해제\n"
-            "   - 우측 '창 배정 기록' 목록에서 항목을 더블 클릭하면 창 배정이 해제됩니다.\n\n"
-            "3. 고정 / 덮개 토글 (더블클릭)\n"
-            "   - '고정' 컬럼 더블클릭: 해당 슬롯을 고정/해제합니다.\n"
-            "   - '덮개' 컬럼 더블클릭: 덮개 표시를 켜기/끄기합니다.\n"
-            "   - 덮개는 사이드 슬롯 위에 투명한 레이어를 생성하여,\n"
-            "     스왑 시 메인으로 이동하는 화면이 잘못 클릭되는 것을 방지합니다.\n"
-            "   - 고정된 슬롯은 메인 슬롯과 스왑되지 않습니다.\n\n"
-            "4. 드래그 앤 드롭으로 슬롯 스왑\n"
-            "   - '창 배정 기록'에서 항목을 드래그하여 다른 슬롯으로 이동하면 창이 스왑됩니다.\n"
-            "   - 고정된 슬롯은 드래그해도 스왑되지 않습니다.\n\n"
-            "5. 레이아웃과 메인 슬롯 (미리보기 화면)\n"
-            "   - 분할선(하늘색 점선)을 드래그하여 슬롯 크기를 바꿀 수 있습니다.\n"
-            "   - 특정 슬롯을 [왼쪽 클릭]하면 그 자리가 'MAIN(메인 슬롯)'이 됩니다.\n"
-            "   - [오른쪽 클릭]하면 두 슬롯을 하나로 합치거나 초기화할 수 있습니다.\n"
-            "   - ⚠️ 주의: 슬롯 크기를 너무 작게 조절하면 창이 제대로 표시되지 않을 수 있습니다.\n\n"
-            "6. 창 전환(스왑) 조작법\n"
-            "   - 'MAIN 슬롯'이 아닌 사이드 슬롯의 창을 쓰고 싶다면, 마우스로 한 번만 클릭하세요.\n"
-            "   - 클릭 즉시 MAIN 슬롯과 자리가 부드럽게 교체됩니다.\n"
-            "   - (이때 투명 덮개는 타일러에 등록된 창에만 적용되므로, 다른 일반 창의 조작을 방해하지 않습니다.)\n\n"
-            "7. 단축키 (핫키) 토글 기능\n"
-            "   - 설정된 단축키(기본 Ctrl+Shift+T)로 타일링 동작을 즉시 켜고 끌 수 있습니다.\n"
-            "   - 좌측 '단축키' 입력 칸을 클릭하고, 원하는 키를 직접 눌러서 변경할 수 있습니다.\n\n"
-            "8. 시스템 트레이 (백그라운드 동작)\n"
-            "   - 설정창을 'X'로 닫으면 트레이로 이동할지 완전 종료할지 선택합니다.\n"
-            "   - 트레이 아이콘 우클릭 메뉴로 설정창 열기, 타일링 토글, 완전 종료가 가능합니다."
-        )
-        messagebox.showinfo("Window Tiler 사용 방법", help_text)
-
-    def _show_window_selector(self):
-        """창 목록 선택 다이얼로그 열기"""
-        WindowSelector(self.root, self.tracker, self.update_ui, self.set_status)
-
-    def _show_excluded_window_selector(self):
-        """자동 지정 시 제외할 창 선택 다이얼로그 열기"""
-        excluded = self.config.get("excluded_windows", [])
-
-        def on_apply(selected_titles):
-            self.config["excluded_windows"] = selected_titles
-            save_config(self.config)
-            count = len(selected_titles)
-            self.set_status(f"● {count}개 창이 자동 지정에서 제외됩니다.", "success")
-
-        ExcludedWindowSelector(self.root, excluded, on_apply)
