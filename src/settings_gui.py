@@ -13,20 +13,20 @@ from .gui.components.control_panel import ControlPanel
 
 
 class SettingsGUI:
-    # [이해 포인트] SettingsGUI 클래스는 메인 설정 화면을 구성하고 컴포넌트들을 조율하는 역할을 담당합니다.
     def __init__(
         self,
+        app_instance,
         config,
         profiles,
-        tracker,
+        trackers,
         start_callback,
         stop_callback,
         update_hotkey_callback=None,
     ):
-        # [핵심 로직] 외부에서 주입된 앱 설정(config), 프로필 목록, 트래커(창 제어 객체) 및 제어용 콜백 함수들을 저장합니다.
+        self.app_instance = app_instance
         self.config = config
         self.profiles = profiles
-        self.tracker = tracker
+        self.trackers = trackers
         self.start_callback = start_callback
         self.stop_callback = stop_callback
         self.update_hotkey_callback = update_hotkey_callback
@@ -41,6 +41,12 @@ class SettingsGUI:
         self.numerical_inputs_panel = None
         self.control_panel = None
         self.slot_tree = None
+
+    @property
+    def tracker(self):
+        # [핵심 로직] 현재 설정된 monitor_index에 해당하는 트래커를 동적으로 반환합니다.
+        idx = self.config.get("monitor_index", 0)
+        return self.trackers.get(idx)
 
     def show(self):
         # [안전 장치] 창이 이미 화면에 존재하고 파괴되지 않았는지(winfo_exists) 확인하여 중복 생성을 방지합니다.
@@ -93,6 +99,14 @@ class SettingsGUI:
         right_pane.pack(side="left", fill="both", expand=True)
 
         # 3. Canvas Layout Preview (Left Top)
+        tk.Label(
+            left_pane,
+            text="🎨 미리보기 (분할)",
+            font=("Segoe UI", 10, "bold"),
+            fg=THEME["text"],
+            bg=THEME["surface"],
+        ).pack(anchor="w", pady=(0, 5))
+
         self.preview_canvas = PreviewCanvas(
             left_pane,
             tracker=self.tracker,
@@ -122,21 +136,31 @@ class SettingsGUI:
         # 6. Slot Tree (Right)
         laps_frame = ttk.Frame(right_pane, style="Container.TFrame")
         laps_frame.pack(fill="both", expand=True)
-        ttk.Label(
+        tk.Label(
             laps_frame,
-            text="창 배정 기록 (Laps)",
+            text="📋 창 배정 기록",
             font=("Segoe UI", 10, "bold"),
-            foreground=THEME["text_dim"],
+            fg=THEME["text"],
+            bg=THEME["surface"],
         ).pack(anchor="w", pady=(0, 10))
 
         self.slot_tree = SlotTreeView(
             laps_frame,
             self.tracker,
+            self.trackers,
+            self.config,
             self.update_ui,
             gui_callbacks={"on_right_click": self._on_tree_right_click},
         )
 
         self.update_ui()
+
+    def global_auto_fill(self, excluded_windows=None, is_specific_targets=False):
+        if self.app_instance:
+            return self.app_instance.global_auto_fill(
+                excluded_windows, is_specific_targets
+            )
+        return 0
 
     def set_status(self, text, status_type="info"):
         # [안전 장치] profile_panel 객체가 존재하는지 검사한 후 상태 메세지를 전달하여 프로그램 크래시를 막습니다.
@@ -176,6 +200,7 @@ class SettingsGUI:
         if self.numerical_inputs_panel:
             self.numerical_inputs_panel.update_inputs()
         if self.slot_tree:
+            self.slot_tree.tracker = self.tracker
             self.slot_tree.update()
 
     def _show_window_selector_wrapper(self, target_idx):
@@ -195,7 +220,7 @@ class SettingsGUI:
         lbl = tk.Label(
             overlay,
             text=f" MONITOR {index} ",
-            fg="white",
+            fg=THEME["text"],
             bg=THEME["accent"],
             font=("Segoe UI", 24, "bold"),
             padx=30,
@@ -258,94 +283,70 @@ class SettingsGUI:
         # [안전 장치] 선택한 아이템이 비어있다면 오류를 피하기 위해 바로 반환(return) 처리합니다.
         if not sel:
             return
-        val = self.slot_tree.tree.item(sel[0], "values")
-        idx = int(val[0])
-        is_locked = False
-        overlay_enabled = True
 
-        # [안전 장치] 선택한 인덱스(idx)가 tracker의 슬롯 배열 크기를 넘어가지 않는지(IndexError 방지) 확인합니다.
-        if self.tracker and idx < len(self.tracker.slots):
-            is_locked = self.tracker.slots[idx].get("locked", False)
-            overlay_enabled = self.tracker.slots[idx].get("overlay_enabled", True)
+        # [글로벌 모드] 새로 변경된 slot_tree에서는 iid 값을 파싱해서 실제 트래커를 찾아야 합니다.
+        target_tracker, idx = self.slot_tree._get_target_tracker_and_slot(sel[0])
+        if not target_tracker or idx == -1:
+            return
+
+        is_locked = target_tracker.slots[idx].get("locked", False)
+        overlay_enabled = target_tracker.slots[idx].get("overlay_enabled", True)
 
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(
-            label="창 할당...", command=self._assign_window_to_selected_slot
+            label="창 할당...",
+            command=lambda: self._assign_window_to_selected_slot(target_tracker, idx),
         )
         menu.add_separator()
         menu.add_command(
-            label="고정 해제" if is_locked else "고정", command=self._toggle_slot_lock
+            label="고정 해제" if is_locked else "고정",
+            command=lambda: self._toggle_slot_lock(target_tracker, idx),
         )
         menu.add_command(
             label="덮개 끄기" if overlay_enabled else "덮개 켜기",
-            command=self._toggle_overlay,
+            command=lambda: self._toggle_overlay(target_tracker, idx),
         )
-        menu.add_command(label="창 할당 해제", command=self._unbind_selected_slot)
+        menu.add_command(
+            label="창 할당 해제",
+            command=lambda: self._unbind_selected_slot(target_tracker, idx),
+        )
 
         # [핵심 로직] 마우스를 우클릭한 화면 좌표(event.x_root, event.y_root)에 동적으로 만든 메뉴를 표시합니다.
         menu.post(event.x_root, event.y_root)
 
-    def _assign_window_to_selected_slot(self):
-        sel = self.slot_tree.tree.selection()
-        if not sel:
-            return
-        val = self.slot_tree.tree.item(sel[0], "values")
-        if not val:
-            return
+    def _assign_window_to_selected_slot(self, target_tracker, idx):
         # [핵심 로직] 트리 뷰에서 선택된 특정 슬롯에 새 윈도우를 배정하기 위해 WindowSelector 대화상자를 오픈합니다.
-        WindowSelector(
-            self.root, self.tracker, self.update_ui, self.set_status, int(val[0])
+        WindowSelector(self.root, target_tracker, self.update_ui, self.set_status, idx)
+
+    def _toggle_slot_lock(self, target_tracker, idx):
+        # [핵심 로직] 해당 슬롯의 잠금 상태(locked)를 토글(반전)시키고, 결과를 하단 상태 표시줄에 안내합니다.
+        target_tracker.toggle_slot_lock(idx)
+        locked = target_tracker.slots[idx].get("locked", False)
+        self.set_status(
+            f"● [M{target_tracker.monitor_index}] 슬롯 {idx} 고정됨"
+            if locked
+            else f"● [M{target_tracker.monitor_index}] 슬롯 {idx} 고정 해제됨",
+            "info",
         )
+        self.update_ui()
 
-    def _toggle_slot_lock(self):
-        sel = self.slot_tree.tree.selection()
-        if not sel:
-            return
-        val = self.slot_tree.tree.item(sel[0], "values")
-        if not val:
-            return
-        idx = int(val[0])
-        if self.tracker and idx < len(self.tracker.slots):
-            # [핵심 로직] 해당 슬롯의 잠금 상태(locked)를 토글(반전)시키고, 결과를 하단 상태 표시줄에 안내합니다.
-            self.tracker.toggle_slot_lock(idx)
-            locked = self.tracker.slots[idx].get("locked", False)
-            self.set_status(
-                f"● 슬롯 {idx} 고정됨" if locked else f"● 슬롯 {idx} 고정 해제됨",
-                "info",
-            )
-            self.update_ui()
+    def _toggle_overlay(self, target_tracker, idx):
+        # [핵심 로직] 슬롯 덮개(Overlay) 표시를 켜거나 끄고, 그 상태 변화를 사용자에게 텍스트로 알립니다.
+        target_tracker.toggle_overlay(idx)
+        overlay_enabled = target_tracker.slots[idx].get("overlay_enabled", True)
+        self.set_status(
+            f"● [M{target_tracker.monitor_index}] 슬롯 {idx} 덮개 켜짐"
+            if overlay_enabled
+            else f"● [M{target_tracker.monitor_index}] 슬롯 {idx} 덮개 꺼짐",
+            "info",
+        )
+        self.update_ui()
 
-    def _toggle_overlay(self):
-        sel = self.slot_tree.tree.selection()
-        if not sel:
-            return
-        val = self.slot_tree.tree.item(sel[0], "values")
-        if not val:
-            return
-        idx = int(val[0])
-        if self.tracker and idx < len(self.tracker.slots):
-            # [핵심 로직] 슬롯 덮개(Overlay) 표시를 켜거나 끄고, 그 상태 변화를 사용자에게 텍스트로 알립니다.
-            self.tracker.toggle_overlay(idx)
-            overlay_enabled = self.tracker.slots[idx].get("overlay_enabled", True)
-            self.set_status(
-                f"● 슬롯 {idx} 덮개 켜짐"
-                if overlay_enabled
-                else f"● 슬롯 {idx} 덮개 꺼짐",
-                "info",
-            )
-            self.update_ui()
-
-    def _unbind_selected_slot(self):
-        sel = self.slot_tree.tree.selection()
-        if not sel:
-            return
-        val = self.slot_tree.tree.item(sel[0], "values")
-        if not val:
-            return
-        idx = int(val[0])
-        if self.tracker and idx < len(self.tracker.slots):
-            # [핵심 로직] 선택된 슬롯이 관리하던 창 핸들(hwnd) 정보를 None으로 삭제하여 연결을 끊고 즉시 창들을 재정렬합니다.
-            self.tracker.slots[idx]["hwnd"] = None
-            self.tracker.reposition_all()
-            self.update_ui()
-            self.set_status(f"● 슬롯 {idx} 할당 해제됨", "info")
+    def _unbind_selected_slot(self, target_tracker, idx):
+        # [핵심 로직] 선택된 슬롯이 관리하던 창 핸들(hwnd) 정보를 None으로 삭제하여 연결을 끊고 즉시 창들을 재정렬합니다.
+        target_tracker.slots[idx]["hwnd"] = None
+        target_tracker.reposition_all()
+        self.update_ui()
+        self.set_status(
+            f"● [M{target_tracker.monitor_index}] 슬롯 {idx} 할당 해제됨", "info"
+        )

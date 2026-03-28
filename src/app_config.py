@@ -12,7 +12,7 @@ DEFAULT_CONFIG = {
     "delay": 0.3,
     "poll_interval": 0.1,
     "monitor_index": 0,
-    "hotkey": "Ctrl+Shift+T",
+    "hotkey": "Ctrl+Shift+E",
     "gap": 0,
     "excluded_windows": [],
 }
@@ -50,10 +50,14 @@ def load_config():
             for k, v in DEFAULT_CONFIG.items():
                 if k not in config:
                     config[k] = v
+            if "monitor_configs" not in config:
+                config["monitor_configs"] = {}
             return config
 
     # [이해 포인트] 파일이 아예 없다면 기본 설정값의 복사본을 반환하여 사용
-    return DEFAULT_CONFIG.copy()
+    config = DEFAULT_CONFIG.copy()
+    config["monitor_configs"] = {}
+    return config
 
 
 def save_config(config):
