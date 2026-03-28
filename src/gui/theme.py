@@ -92,7 +92,7 @@ def setup_styles(root=None):
     style.configure(
         "Treeview",
         background="#1a1a2e",
-        foreground=THEME["accent"],
+        foreground=THEME["text"],
         fieldbackground="#1a1a2e",
         rowheight=30,
         font=("Courier New", 12, "bold"),

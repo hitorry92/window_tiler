@@ -11,15 +11,17 @@ class SplitPanel(ttk.Frame):
         self.app = app
 
         # 간격
-        ttk.Label(self, text="간격:", style="Container.TLabel").pack(side="left")
+        ttk.Label(self, text="⟷ 간격:", style="Container.TLabel").pack(
+            side="left", padx=(0, 5)
+        )
         self.gap_var = tk.StringVar(value=str(self.app.config.get("gap", 0)))
         gap_e = ttk.Entry(self, textvariable=self.gap_var, width=5)
         gap_e.pack(side="left", padx=5)
         gap_e.bind("<Return>", lambda e: self._on_gap_change())
 
         # 핫키
-        ttk.Label(self, text="단축키:", style="Container.TLabel").pack(
-            side="left", padx=(10, 0)
+        ttk.Label(self, text="🔢 단축키:", style="Container.TLabel").pack(
+            side="left", padx=(0, 5)
         )
         fallback = self.app.config.get("hotkey", "Ctrl+Shift+T")
         self.hotkey_entry = HotkeyEntryWidget(
@@ -54,26 +56,26 @@ class SplitPanel(ttk.Frame):
         except ValueError:
             messagebox.showwarning("오류", "숫자만 입력해 주세요.")
 
+    def _get_current_profile(self):
+        idx_str = str(self.app.config.get("monitor_index", 0))
+        mon_config = self.app.config.get("monitor_configs", {}).get(idx_str, {})
+        p_name = mon_config.get("profile", "기본")
+        return self.app.profiles.get(p_name, self.app.profiles.get("기본", {}))
+
     def _add_v_split(self):
-        p = self.app.profiles.get(
-            self.app.config.get("profile", "기본"), self.app.profiles["기본"]
-        )
+        p = self._get_current_profile()
         p.setdefault("vertical", []).append(0.5)
         p["vertical"].sort()
         self.app.request_layout_update(reposition=False)
 
     def _add_h_split(self):
-        p = self.app.profiles.get(
-            self.app.config.get("profile", "기본"), self.app.profiles["기본"]
-        )
+        p = self._get_current_profile()
         p.setdefault("horizontal", []).append(0.5)
         p["horizontal"].sort()
         self.app.request_layout_update(reposition=False)
 
     def _reset_splits(self):
-        p = self.app.profiles.get(
-            self.app.config.get("profile", "기본"), self.app.profiles["기본"]
-        )
+        p = self._get_current_profile()
         p["horizontal"] = []
         p["vertical"] = [0.33, 0.67]
         self.app.request_layout_update(reposition=False)
@@ -89,6 +91,12 @@ class NumericalInputsPanel(ttk.Frame):
         self.h_scroll_frame = ttk.Frame(self, style="Container.TFrame")
         self.h_scroll_frame.pack(side="top", fill="x", pady=2)
 
+    def _get_current_profile(self):
+        idx_str = str(self.app.config.get("monitor_index", 0))
+        mon_config = self.app.config.get("monitor_configs", {}).get(idx_str, {})
+        p_name = mon_config.get("profile", "기본")
+        return self.app.profiles.get(p_name, self.app.profiles.get("기본", {}))
+
     def update_inputs(self):
         for child in self.v_scroll_frame.winfo_children():
             child.destroy()
@@ -97,9 +105,8 @@ class NumericalInputsPanel(ttk.Frame):
 
         if not self.app.config:
             return
-        p = self.app.profiles.get(
-            self.app.config.get("profile", "기본"), self.app.profiles["기본"]
-        )
+
+        p = self._get_current_profile()
 
         ttk.Label(self.v_scroll_frame, text=" 세로선: ", style="Dim.TLabel").pack(
             side="left", padx=(0, 5)
@@ -134,9 +141,7 @@ class NumericalInputsPanel(ttk.Frame):
         try:
             val = float(entry_var.get())
             if 0 < val < 1:
-                p = self.app.profiles.get(
-                    self.app.config.get("profile", "기본"), self.app.profiles["기본"]
-                )
+                p = self._get_current_profile()
                 if stype == "v":
                     p["vertical"][index] = val
                     p["vertical"].sort()
@@ -148,13 +153,11 @@ class NumericalInputsPanel(ttk.Frame):
             pass
 
     def _remove_split(self, stype, index):
-        p = self.app.profiles.get(
-            self.app.config.get("profile", "기본"), self.app.profiles["기본"]
-        )
+        p = self._get_current_profile()
         if stype == "v":
-            if index < len(p["vertical"]):
+            if index < len(p.get("vertical", [])):
                 del p["vertical"][index]
         else:
-            if index < len(p["horizontal"]):
+            if index < len(p.get("horizontal", [])):
                 del p["horizontal"][index]
         self.app.request_layout_update(reposition=True)

@@ -7,12 +7,21 @@ from src.win_utils import get_window_list
 class WindowSelector:
     """열려 있는 창 목록을 보여주고 일괄 선택하여 지정하는 다이얼로그 (Cycle 15)"""
 
-    def __init__(self, parent, tracker, callback_ui, callback_status, target_slot=None):
+    def __init__(
+        self,
+        parent,
+        tracker,
+        callback_ui,
+        callback_status,
+        target_slot=None,
+        on_apply_callback=None,
+    ):
         # [이해 포인트] 다이얼로그 생성 시 필요한 부모 창, 상태 추적기, UI/상태 업데이트 콜백, 대상 슬롯을 인자로 받습니다.
         self.parent = parent
         self.tracker = tracker
         self.callback_ui = callback_ui
         self.callback_status = callback_status
+        self.on_apply_callback = on_apply_callback
         # [핵심 로직] target_slot이 None이면 일괄 배정 모드, 특정 숫자면 해당 슬롯에만 단일 배정하는 모드로 작동합니다.
         self.target_slot = target_slot  # 단일 슬롯 할당 모드
 
@@ -135,7 +144,14 @@ class WindowSelector:
             return
 
         # 일괄 배정 모드
-        # [핵심 로직] 현재 비어있는 슬롯들의 인덱스만 모아서 리스트로 만듭니다.
+        # [수정] 글로벌 모드 지원을 위해 WindowSelector가 tracker.slots를 직접 조작하지 않고,
+        # 선택된 hwnd 리스트를 부모 뷰(ControlPanel)로 돌려주는 방식으로 책임을 넘깁니다.
+        # ControlPanel에서 등록한 on_apply 콜백이 있다면 이를 호출합니다.
+        if self.on_apply_callback:
+            self.on_apply_callback(selected_hwnds)
+            self.dialog.destroy()
+            return
+
         empty_slots = [i for i, s in enumerate(self.tracker.slots) if s["hwnd"] is None]
 
         # [안전 장치] 비어있는 슬롯이 하나도 없다면, 더 이상 창을 배정할 수 없으므로 경고를 띄우고 종료합니다.

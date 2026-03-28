@@ -50,31 +50,56 @@ class PreviewCanvas(tk.Canvas):
         self.bind("<Motion>", self._on_motion)
         self.bind("<Button-3>", self._on_right_click)
 
+    # [핵심 로직] 현재 모니터의 설정을 가져오는 헬퍼 함수
+    def _get_mon_config(self):
+        idx_str = str(self.config.get("monitor_index", 0))
+        return self.config.get("monitor_configs", {}).get(idx_str, {})
+
     # [핵심 로직] 현재 프로필 설정과 트래커 데이터를 바탕으로 캔버스 위에 슬롯과 분할선을 다시 그립니다.
     def update_drawing(self):
         self.delete("all")
         if not self.tracker or not self.config:
             return
 
-        main_idx = self.config.get("main_slot_index", 0)
+        mon_config = self._get_mon_config()
+        main_idx = mon_config.get("main_slot_index", 0)
+
+        swap_mode = self.config.get("swap_mode", "local")
+        g_mon = self.config.get("global_main_monitor", 0)
+        g_slot = self.config.get("global_main_slot", 0)
+        is_global_main_monitor = (
+            swap_mode == "global" and self.tracker.monitor_index == g_mon
+        )
 
         # 슬롯 그리기
         for i, slot in enumerate(self.tracker.slot_rects):
             x1, y1, x2, y2 = self._get_canvas_coords(i)
-            is_main = i == main_idx
+            is_local_main = i == main_idx
+            is_global_main = is_global_main_monitor and i == g_slot
 
-            fill_color = "#004466" if is_main else THEME["surface"]
-            outline_color = THEME["accent"] if is_main else THEME["border"]
-            width = 3 if is_main else 1
+            # [수정] 글로벌 모드일 경우 각 모니터의 로컬 메인(MAIN) 표시는 무시하고 오직 GLOBAL MAIN만 강조합니다.
+            if swap_mode == "global":
+                is_main_display = is_global_main
+                fill_color = "#660044" if is_global_main else THEME["surface"]
+                display_text = f"{i}\nGLOBAL MAIN" if is_global_main else str(i)
+            else:
+                is_main_display = is_local_main
+                fill_color = "#004466" if is_local_main else THEME["surface"]
+                display_text = f"{i}\nMAIN" if is_local_main else str(i)
+
+            outline_color = THEME["accent"] if is_main_display else THEME["border"]
+            width = 3 if is_main_display else 1
 
             self.create_rectangle(
                 x1, y1, x2, y2, fill=fill_color, outline=outline_color, width=width
             )
 
-            text_color = "white" if is_main else THEME["text_dim"]
-            display_text = f"{i}\nMAIN" if is_main else str(i)
+            text_color = "white" if is_main_display else THEME["text_dim"]
+
             font_style = (
-                ("Segoe UI", 14, "bold") if is_main else ("Segoe UI", 12, "bold")
+                ("Segoe UI", 14, "bold")
+                if is_main_display
+                else ("Segoe UI", 12, "bold")
             )
 
             self.create_text(
@@ -87,7 +112,9 @@ class PreviewCanvas(tk.Canvas):
             )
 
         # 분할선 그리기
-        p = self.profiles.get(self.config.get("profile", "기본"), self.profiles["기본"])
+        p = self.profiles.get(
+            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+        )
         ox1, oy1 = self._ratio_to_canvas(0, 0)
         ox2, oy2 = self._ratio_to_canvas(1, 1)
 
@@ -162,10 +189,20 @@ class PreviewCanvas(tk.Canvas):
         if not self.tracker:
             return
 
+        mon_config = self._get_mon_config()
+        swap_mode = self.config.get("swap_mode", "local")
+
         for i, slot in enumerate(self.tracker.slot_rects):
             x1, y1, x2, y2 = self._get_canvas_coords(i)
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
-                self.config["main_slot_index"] = i
+                if swap_mode == "global":
+                    self.config["global_main_monitor"] = self.tracker.monitor_index
+                    self.config["global_main_slot"] = i
+                else:
+                    mon_config["main_slot_index"] = i
+                    # Legacy update
+                    self.config["main_slot_index"] = i
+
                 self.tracker.update_layout()
                 self.update_drawing()
                 self.on_save_config()
@@ -178,7 +215,10 @@ class PreviewCanvas(tk.Canvas):
         if self.dragging_split:
             return
 
-        p = self.profiles.get(self.config.get("profile", "기본"), self.profiles["기본"])
+        mon_config = self._get_mon_config()
+        p = self.profiles.get(
+            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+        )
         mx, my = event.x, event.y
         match_found = None
 
@@ -209,7 +249,10 @@ class PreviewCanvas(tk.Canvas):
             return
 
         stype, idx = self.dragging_split["type"], self.dragging_split["index"]
-        p = self.profiles.get(self.config.get("profile", "기본"), self.profiles["기본"])
+        mon_config = self._get_mon_config()
+        p = self.profiles.get(
+            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+        )
         rx, ry = self._canvas_to_ratio(event.x, event.y)
 
         # [안전 장치] 분할선 위치 변경 후 리스트를 정렬하여 선이 교차하거나 순서가 꼬이는 것을 방지합니다.
@@ -251,9 +294,19 @@ class PreviewCanvas(tk.Canvas):
             label=f"슬롯 {target_idx}에 창 할당...",
             command=lambda: self.on_show_window_selector(target_idx),
         )
-        menu.add_command(
-            label="메인 슬롯으로 지정", command=lambda: self._set_main_slot(target_idx)
-        )
+
+        swap_mode = self.config.get("swap_mode", "local")
+        if swap_mode == "global":
+            menu.add_command(
+                label="★ 전역 메인 슬롯으로 지정 ★",
+                command=lambda: self._set_global_main_slot(target_idx),
+            )
+        else:
+            menu.add_command(
+                label="메인 슬롯으로 지정",
+                command=lambda: self._set_main_slot(target_idx),
+            )
+
         menu.add_separator()
         menu.add_command(
             label="오른쪽 칸과 합치기",
@@ -271,7 +324,18 @@ class PreviewCanvas(tk.Canvas):
         menu.post(event.x_root, event.y_root)
 
     def _set_main_slot(self, idx):
-        self.config["main_slot_index"] = idx
+        mon_config = self._get_mon_config()
+        mon_config["main_slot_index"] = idx
+        self.config["main_slot_index"] = idx  # Legacy fallback
+
+        self.tracker.update_layout()
+        self.update_drawing()
+        self.on_save_config()
+        self.on_layout_update(reposition=False)
+
+    def _set_global_main_slot(self, idx):
+        self.config["global_main_monitor"] = self.tracker.monitor_index
+        self.config["global_main_slot"] = idx
         self.tracker.update_layout()
         self.update_drawing()
         self.on_save_config()
@@ -281,7 +345,12 @@ class PreviewCanvas(tk.Canvas):
     def _merge_slots(self, slot_idx, direction):
         slot = self.tracker.slot_rects[slot_idx]
         base_indices = slot.get("base_indices", [slot_idx])
-        p = self.profiles.get(self.config.get("profile", "기본"), self.profiles["기본"])
+
+        mon_config = self._get_mon_config()
+        p = self.profiles.get(
+            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+        )
+
         num_cols = len(p.get("vertical", [])) + 1
 
         # [위험] 그리드 형태의 배열 구조를 가정하고 인덱스 덧셈을 수행하므로, 레이아웃 구조가 복잡해지면 버그가 발생할 수 있습니다.
@@ -319,13 +388,21 @@ class PreviewCanvas(tk.Canvas):
     def _unmerge_slot(self, slot_idx):
         slot = self.tracker.slot_rects[slot_idx]
         base_indices = slot.get("base_indices", [slot_idx])
-        p = self.profiles.get(self.config.get("profile", "기본"), self.profiles["기본"])
+
+        mon_config = self._get_mon_config()
+        p = self.profiles.get(
+            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+        )
+
         merges = p.get("merges", [])
         p["merges"] = [g for g in merges if not any(idx in base_indices for idx in g)]
         self.on_layout_update(reposition=True)
 
     def _reset_all_merges(self):
-        p = self.profiles.get(self.config.get("profile", "기본"), self.profiles["기본"])
+        mon_config = self._get_mon_config()
+        p = self.profiles.get(
+            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+        )
         p["merges"] = []
         self.on_layout_update(reposition=True)
 

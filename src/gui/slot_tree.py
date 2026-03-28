@@ -6,14 +6,27 @@ from .theme import THEME
 
 class SlotTreeView:
     # [이해 포인트] UI에서 슬롯 목록을 보여주고 관리하는 트리뷰(표) 컴포넌트입니다.
-    def __init__(self, parent, tracker, on_update_callback, gui_callbacks=None):
+    def __init__(
+        self,
+        parent,
+        tracker,
+        trackers,
+        app_config,
+        on_update_callback,
+        gui_callbacks=None,
+    ):
         self.parent = parent
         self.tracker = tracker
+        self.trackers = trackers
+        self.app_config = app_config
         self.on_update_callback = on_update_callback
         self.gui_callbacks = gui_callbacks or {}
         self.tree = None
         self._drag_source = None
         self.root = None
+
+        # [글로벌 모드] 트래커 간 매핑 정보를 저장하는 리스트 (iid -> (mon_idx, slot_idx))
+        self.slot_mapping = []
 
         self._create_widgets()
 
@@ -32,8 +45,8 @@ class SlotTreeView:
         self.tree.heading("title", text="창 제목")
         self.tree.heading("locked", text="고정")
         self.tree.heading("overlay", text="덮개")
-        self.tree.column("index", width=50, anchor="center")
-        self.tree.column("title", width=280)
+        self.tree.column("index", width=100, anchor="center")
+        self.tree.column("title", width=250)
         self.tree.column("locked", width=60, anchor="center")
         self.tree.column("overlay", width=60, anchor="center")
 
@@ -51,6 +64,18 @@ class SlotTreeView:
         self.tree.bind("<Button-1>", self._on_drag_start)
         self.tree.bind("<B1-Motion>", self._on_drag_motion)
         self.tree.bind("<ButtonRelease-1>", self._on_drag_drop)
+
+    def _get_target_tracker_and_slot(self, iid):
+        # iid(문자열 인덱스)를 받아서 실제 모니터 인덱스와 슬롯 인덱스, 트래커를 반환합니다.
+        try:
+            idx = int(iid)
+            if idx < len(self.slot_mapping):
+                mon_idx, slot_idx = self.slot_mapping[idx]
+                target_tracker = self.trackers.get(mon_idx)
+                return target_tracker, slot_idx
+        except ValueError:
+            pass
+        return None, -1
 
     def _on_right_click(self, event):
         # [이해 포인트] 마우스 우클릭 시 해당 위치의 행을 식별하고 선택 상태로 만듭니다.
@@ -78,22 +103,22 @@ class SlotTreeView:
             return
 
         col_idx = int(column.replace("#", ""))
-        idx = int(item_id)
-        # [위험] 인덱스가 실제 트래커의 슬롯 개수를 초과하지 않도록 검사하여 에러를 방지합니다.
-        if idx >= len(self.tracker.slots):
+
+        target_tracker, target_slot_idx = self._get_target_tracker_and_slot(item_id)
+        if not target_tracker or target_slot_idx == -1:
             return
 
         # [핵심 로직] 클릭한 열(Column) 위치에 따라 다른 동작을 수행합니다.
         if col_idx == 3:
             # 3번째 열(고정): 해당 슬롯의 고정 상태를 켜거나 끕니다.
-            self.tracker.toggle_slot_lock(idx)
+            target_tracker.toggle_slot_lock(target_slot_idx)
         elif col_idx == 4:
             # 4번째 열(덮개): 해당 슬롯의 덮개(Overlay) 상태를 켜거나 끕니다.
-            self.tracker.toggle_overlay(idx)
+            target_tracker.toggle_overlay(target_slot_idx)
         elif col_idx in (1, 2):
             # 1, 2번째 열(슬롯 번호, 창 제목): 해당 슬롯에 연결된 창(hwnd)을 해제(비움)합니다.
-            self.tracker.slots[idx]["hwnd"] = None
-            self.tracker.reposition_all()
+            target_tracker.slots[target_slot_idx]["hwnd"] = None
+            target_tracker.reposition_all()
 
         # 변경 사항이 있으므로 화면을 업데이트하는 콜백을 호출합니다.
         self.on_update_callback()
@@ -132,17 +157,42 @@ class SlotTreeView:
             self._drag_source = None
             return
 
-        src_idx = int(src_vals[0])
-        dst_idx = int(dst_vals[0])
+        src_tracker, src_slot_idx = self._get_target_tracker_and_slot(self._drag_source)
+        dst_tracker, dst_slot_idx = self._get_target_tracker_and_slot(target)
 
-        if src_idx < len(self.tracker.slots) and dst_idx < len(self.tracker.slots):
-            result = self.tracker.swap_slots(src_idx, dst_idx)
-            # [위험] 고정(Locked)된 슬롯이 포함되어 있으면 위치 변경이 거부될 수 있습니다.
+        if not src_tracker or not dst_tracker:
+            self._drag_source = None
+            return
+
+        # 로컬 스왑인 경우 (같은 모니터 안에서 드래그)
+        if src_tracker == dst_tracker:
+            result = src_tracker.swap_slots(src_slot_idx, dst_slot_idx)
             if not result:
-                src_locked = self.tracker.slots[src_idx].get("locked", False)
-                dst_locked = self.tracker.slots[dst_idx].get("locked", False)
+                src_locked = src_tracker.slots[src_slot_idx].get("locked", False)
+                dst_locked = src_tracker.slots[dst_slot_idx].get("locked", False)
                 if src_locked or dst_locked:
+                    self._drag_source = None
                     return "[BLOCKED] Fixed slot"
+            self.on_update_callback()
+
+        # 글로벌 스왑인 경우 (다른 모니터로 드래그)
+        else:
+            with src_tracker.lock, dst_tracker.lock:
+                slot_src = src_tracker.slots[src_slot_idx]
+                slot_dst = dst_tracker.slots[dst_slot_idx]
+
+                if slot_src.get("locked") or slot_dst.get("locked"):
+                    self._drag_source = None
+                    return "[BLOCKED] Fixed slot"
+
+                # 스왑 처리
+                src_tracker.slots[src_slot_idx], dst_tracker.slots[dst_slot_idx] = (
+                    slot_dst,
+                    slot_src,
+                )
+
+            src_tracker.reposition_all()
+            dst_tracker.reposition_all()
             self.on_update_callback()
 
         self._drag_source = None
@@ -153,19 +203,65 @@ class SlotTreeView:
 
         # 기존 트리뷰의 모든 항목을 지우고 새로 그립니다.
         self.tree.delete(*self.tree.get_children())
+        self.slot_mapping = []
 
-        # [핵심 로직] 트래커가 관리하는 모든 슬롯 정보를 순회하며 트리뷰에 행을 추가합니다.
-        for i, slot in enumerate(self.tracker.slots):
-            hwnd = slot["hwnd"]
-            # [안전 장치] hwnd가 유효한 윈도우 핸들인지(IsWindow) 확인한 뒤에만 창 제목을 가져옵니다.
-            title = (
-                win32gui.GetWindowText(hwnd)
-                if hwnd and win32gui.IsWindow(hwnd)
-                else "(비어 있음)"
-            )
-            # [이해 포인트] 고정 및 덮개 상태를 직관적인 이모지(🔒/☐, 👁/○)로 표현합니다.
-            locked_icon = "🔒" if slot.get("locked") else "☐"
-            overlay_icon = "👁" if slot.get("overlay_enabled", True) else "○"
-            self.tree.insert(
-                "", "end", iid=str(i), values=(i, title, locked_icon, overlay_icon)
-            )
+        is_global_mode = False
+        if self.app_config:
+            is_global_mode = self.app_config.get("swap_mode", "local") == "global"
+
+        # [글로벌 모드] 모든 트래커의 슬롯을 통합해서 보여줍니다.
+        if is_global_mode and self.trackers:
+            global_index = 0
+            # 모니터 번호 순서대로 정렬하여 출력
+            for mon_idx in sorted(self.trackers.keys()):
+                tracker = self.trackers[mon_idx]
+                for i, slot in enumerate(tracker.slots):
+                    hwnd = slot["hwnd"]
+                    title = (
+                        win32gui.GetWindowText(hwnd)
+                        if hwnd and win32gui.IsWindow(hwnd)
+                        else "(비어 있음)"
+                    )
+                    locked_icon = "🔒" if slot.get("locked") else "☐"
+                    overlay_icon = "👁" if slot.get("overlay_enabled", True) else "○"
+
+                    # [M0] 0번 형태의 직관적인 라벨 생성
+                    display_index = f"[M{mon_idx}] {i}번"
+
+                    self.tree.insert(
+                        "",
+                        "end",
+                        iid=str(global_index),
+                        values=(display_index, title, locked_icon, overlay_icon),
+                    )
+                    # 매핑 정보 저장
+                    self.slot_mapping.append((mon_idx, i))
+                    global_index += 1
+
+        # [로컬 모드] 기존처럼 현재 선택된 모니터의 슬롯만 보여줍니다.
+        else:
+            if not self.tracker:
+                return
+
+            for i, slot in enumerate(self.tracker.slots):
+                hwnd = slot["hwnd"]
+                title = (
+                    win32gui.GetWindowText(hwnd)
+                    if hwnd and win32gui.IsWindow(hwnd)
+                    else "(비어 있음)"
+                )
+                locked_icon = "🔒" if slot.get("locked") else "☐"
+                overlay_icon = "👁" if slot.get("overlay_enabled", True) else "○"
+
+                # [수정] 모니터 인덱스를 명시 (단일 모드에서도 표기 방식 적용)
+                mon_idx = self.tracker.monitor_index
+                display_index = f"[M{mon_idx}] {i}번"
+
+                self.tree.insert(
+                    "",
+                    "end",
+                    iid=str(i),
+                    values=(display_index, title, locked_icon, overlay_icon),
+                )
+                # 매핑 정보 저장 (현재 모니터 전용)
+                self.slot_mapping.append((mon_idx, i))
