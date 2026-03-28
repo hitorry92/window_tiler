@@ -64,6 +64,12 @@ def is_valid_window(hwnd):
         if (rect[2] - rect[0]) < 10 or (rect[3] - rect[1]) < 10:
             return False
 
+        # 1.5 최소화된 창 체크 (Minimized 창 필터링)
+        # [이해 포인트] 사용자가 작업표시줄로 내려놓은 창(최소화)은 화면 자동 배정에서 제외합니다.
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+        if style & win32con.WS_MINIMIZE:
+            return False
+
         # 2. DWM Cloaked 상태 체크 (유령 창 필터링 핵심)
         # 윈도우 10/11 UWP 앱(설정 등)은 화면에 안 보여도 Visible인 경우가 많음
         # [위험] 이 검사를 누락하면 화면에 보이지 않는 백그라운드 앱들(유령 창)까지 목록에 포함될 수 있습니다.
@@ -129,6 +135,33 @@ def is_window_in_rect(hwnd, target_rect):
         return False
 
 
+# [핵심 로직] 특정 모니터 핸들(hmonitor)을 받아 DPI 스케일 비율을 반환합니다.
+def get_monitor_dpi_scale(hmonitor):
+    """주어진 모니터 핸들의 DPI 스케일 비율(예: 1.0, 1.5)을 반환합니다."""
+    try:
+        dpiX = ctypes.c_uint()
+        dpiY = ctypes.c_uint()
+        # MDT_EFFECTIVE_DPI = 0
+        ctypes.windll.shcore.GetDpiForMonitor(
+            int(hmonitor), 0, ctypes.byref(dpiX), ctypes.byref(dpiY)
+        )
+        return dpiX.value / 96.0
+    except Exception:
+        return 1.0
+
+
+# [핵심 로직] 특정 윈도우가 현재 위치한 모니터의 DPI 스케일 비율을 반환합니다.
+def get_monitor_dpi_scale_by_hwnd(hwnd):
+    """주어진 윈도우가 위치한 모니터의 DPI 스케일 비율(예: 1.0, 1.5)을 반환합니다."""
+    try:
+        MONITOR_DEFAULTTONEAREST = 2
+        hmonitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+        return get_monitor_dpi_scale(hmonitor)
+    except Exception:
+        # 실패 시 기본 배율 100% (1.0) 가정
+        return 1.0
+
+
 # [이해 포인트] 윈도우 10/11의 보이지 않는 그림자(Shadow) 두께를 계산합니다.
 def get_window_margin(hwnd):
     """윈도우의 투명 테두리(Shadow 등)로 인한 마진을 계산 (Cycle 15)"""
@@ -179,8 +212,20 @@ def move_window_precision(hwnd, x, y, w, h):
     else:
         new_x, new_y, new_w, new_h = x, y, w, h
 
-    flags = win32con.SWP_NOACTIVATE | win32con.SWP_FRAMECHANGED | win32con.SWP_NOZORDER
-    win32gui.SetWindowPos(hwnd, 0, new_x, new_y, new_w, new_h, flags)
+    # [핵심 변경] Two-Step 렌더링: 위치 이동과 크기 조절을 분리하여 OS가 DPI 변경을 인지할 시간을 줍니다.
+
+    # 1단계: 위치(x, y)만 새로운 모니터로 이동시킵니다. (크기 변경 무시)
+    move_flags = win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER | win32con.SWP_NOSIZE
+    win32gui.SetWindowPos(hwnd, 0, new_x, new_y, 0, 0, move_flags)
+
+    # 2단계: 새로운 모니터 환경에서 인식된 스케일에 맞춰 크기(w, h)를 강제 지정합니다. (위치 이동 무시)
+    size_flags = (
+        win32con.SWP_NOACTIVATE
+        | win32con.SWP_FRAMECHANGED
+        | win32con.SWP_NOZORDER
+        | win32con.SWP_NOMOVE
+    )
+    win32gui.SetWindowPos(hwnd, 0, 0, 0, new_w, new_h, size_flags)
 
 
 # [핵심 로직] 현재 열려 있는 모든 창을 검사하여 조건에 맞는 창 목록을 가져옵니다.

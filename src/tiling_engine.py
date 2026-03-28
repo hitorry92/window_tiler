@@ -8,6 +8,8 @@ from .win_utils import (
     move_window_precision,
     is_valid_window,
     is_window_in_rect,
+    get_monitor_dpi_scale_by_hwnd,
+    get_monitor_dpi_scale,
 )
 
 
@@ -15,14 +17,22 @@ from .win_utils import (
 # 창을 가둘 '슬롯(영역)'을 계산하고, 열려있는 창(HWND)을 슬롯에 매핑하며, 포커스 변경 시 자리를 바꾸는(Swap) 모든 로직을 관장합니다.
 class WindowTracker:
     def __init__(
-        self, monitor_index, profiles, monitor_config, ui_update_callback=None
+        self,
+        monitor_index,
+        profiles,
+        monitor_config,
+        ui_update_callback=None,
+        app_config=None,
+        request_global_swap_callback=None,
     ):
         self.monitor_index = monitor_index
         self.profiles = profiles  # 전체 프로필 데이터 (분할 비율 등)
         self.monitor_config = monitor_config  # 현재 모니터에 적용된 설정 (프로필 이름, 메인 슬롯 인덱스 등)
+        self.app_config = app_config  # 전체 앱 설정 (글로벌 모드 확인용)
         self.ui_update_callback = (
             ui_update_callback  # 상태 변경 시 UI를 새로고침하기 위한 콜백 함수
         )
+        self.request_global_swap_callback = request_global_swap_callback
 
         # [위험] 이 엔진은 백그라운드 검사 스레드, 핫키 스레드, 윈도우 훅 스레드에서 동시다발적으로 접근됩니다.
         # 따라서 self.slots나 self.slot_rects 같은 중요 데이터를 읽거나 쓸 때는 반드시 self.lock을 걸어야 Race Condition을 막을 수 있습니다.
@@ -112,11 +122,30 @@ class WindowTracker:
             return
 
         main_idx = self.monitor_config.get("main_slot_index", 0)
+
+        # [수정] 글로벌 스왑 모드일 경우, 로컬 메인 슬롯(main_idx)은 일반 슬롯 취급하고 오직 글로벌 메인 슬롯만 덮개를 뺍니다.
+        swap_mode = (
+            self.app_config.get("swap_mode", "local") if self.app_config else "local"
+        )
+        g_mon = self.app_config.get("global_main_monitor", 0) if self.app_config else 0
+        g_slot = self.app_config.get("global_main_slot", 0) if self.app_config else 0
+        is_global_main_mon = swap_mode == "global" and self.monitor_index == g_mon
+
         active_slots = []
         for i, slot in enumerate(self.slots):
-            # 덮개는 '메인 슬롯'이 아니고, '창이 실제로 존재하며', '덮개 설정이 켜져 있는' 경우에만 씌웁니다.
+            # 덮개를 씌워야 하는 조건 판단
+            needs_overlay = False
+            if swap_mode == "global":
+                # 글로벌 모드: 오직 자기가 지정된 글로벌 메인일 때만 덮개를 뺌
+                if not (is_global_main_mon and i == g_slot):
+                    needs_overlay = True
+            else:
+                # 로컬 모드: 자기가 로컬 메인이면 덮개를 뺌
+                if i != main_idx:
+                    needs_overlay = True
+
             if (
-                i != main_idx
+                needs_overlay
                 and slot.get("hwnd")
                 and win32gui.IsWindow(slot["hwnd"])
                 and slot.get("overlay_enabled", True)
@@ -338,46 +367,61 @@ class WindowTracker:
         if self.is_paused:
             return
 
+        # [1단계: 결정] Lock 안에서는 어떤 행동을 할지 '결정'만 하고 변수에 저장합니다.
+        action = None
+        swap_request_args = None
+
         with self.lock:
-            # [규칙] 배정 기록에 없는(관리 대상이 아닌) 창은 무시
             if not any(s["hwnd"] == hwnd for s in self.slots):
                 return
-
-            # [규칙] 현재 모니터 영역을 벗어난 창이라면 무시
             m = self.monitor_info
             if not is_window_in_rect(hwnd, (m["x"], m["y"], m["width"], m["height"])):
                 return
 
-            main_idx = self.monitor_config.get("main_slot_index", 0)
-            if main_idx >= len(self.slot_rects):
-                main_idx = 0
-
-            # 이미 메인 슬롯에 있는 창이면 스왑할 필요 없음
-            if self.slots[main_idx]["hwnd"] == hwnd:
-                return
-
-            # 지금 포커스 받은 창이 원래 몇 번 슬롯에 있었는지 찾기
             old_idx = -1
             for i, s in enumerate(self.slots):
                 if s["hwnd"] == hwnd:
                     old_idx = i
                     break
 
-            old_main = self.slots[main_idx]["hwnd"]
-
-            # 메인 슬롯이나 타겟 슬롯이 잠겨(locked) 있으면 스왑 취소
-            if self.slots[main_idx].get("locked") or (
-                old_idx != -1 and self.slots[old_idx].get("locked")
-            ):
+            if old_idx == -1:
                 return
 
-            # [스왑 실행] 두 창의 핸들(hwnd) 위치를 맞바꿉니다
-            self.slots[main_idx]["hwnd"] = hwnd
-            if old_idx != -1:
-                self.slots[old_idx]["hwnd"] = old_main
+            swap_mode = (
+                self.app_config.get("swap_mode", "local")
+                if self.app_config
+                else "local"
+            )
 
-            # 데이터 교환 후 물리적인 윈도우 이동을 수행합니다
-            self.reposition_all()
+            if swap_mode == "global":
+                g_mon = (
+                    self.app_config.get("global_main_monitor", 0)
+                    if self.app_config
+                    else 0
+                )
+                if self.monitor_index != g_mon:
+                    if self.request_global_swap_callback:
+                        action = "request_global_swap"
+                        swap_request_args = (self.monitor_index, old_idx)
+                else:  # 자신이 글로벌 메인 모니터
+                    main_idx = self.app_config.get("global_main_slot", 0)
+                    if self.slots[main_idx]["hwnd"] != hwnd:
+                        action = "local_swap"
+            else:  # 로컬 모드
+                main_idx = self.monitor_config.get("main_slot_index", 0)
+                if main_idx >= len(self.slots):
+                    main_idx = 0
+                if self.slots[main_idx]["hwnd"] != hwnd:
+                    action = "local_swap"
+
+        # [2단계: 실행] Lock 밖에서 결정된 행동을 실행합니다.
+        if action == "request_global_swap":
+            self.request_global_swap_callback(
+                swap_request_args[0], swap_request_args[1]
+            )
+        elif action == "local_swap":
+            # 로컬 스왑은 self.lock을 다시 사용하므로 별도 함수로 호출
+            self.swap_to_main(old_idx)
 
     def reposition_all(self):
         """[핵심 행동] 현재 self.slots에 매핑된 상태 그대로 OS API를 이용해 실제 윈도우들을 이동시킵니다."""
@@ -385,8 +429,10 @@ class WindowTracker:
             hwnd = slot["hwnd"]
             if hwnd and win32gui.IsWindow(hwnd):
                 rect = self.slot_rects[i]["rect"]
-                # win_utils.py에 있는 DWM 보정이 적용된 정밀 이동 함수
-                move_window_precision(hwnd, *rect)
+                x, y, w, h = rect
+
+                # win_utils.py에 있는 DWM 보정이 적용된 정밀 이동 함수 (Two-Step 렌더링 방식 호출)
+                move_window_precision(hwnd, x, y, w, h)
         self.refresh_overlays()
 
     def force_refresh(self):
@@ -418,7 +464,31 @@ class WindowTracker:
 
         with self.lock:
             num_slots = len(self.slot_rects)
-            main_idx = self.monitor_config.get("main_slot_index", 0)
+            swap_mode = (
+                self.app_config.get("swap_mode", "local")
+                if self.app_config
+                else "local"
+            )
+
+            if swap_mode == "global":
+                g_mon = (
+                    self.app_config.get("global_main_monitor", 0)
+                    if self.app_config
+                    else 0
+                )
+                g_slot = (
+                    self.app_config.get("global_main_slot", 0) if self.app_config else 0
+                )
+
+                # 자기가 글로벌 메인 모니터라면 글로벌 메인 슬롯부터 먼저 채웁니다.
+                if self.monitor_index == g_mon:
+                    main_idx = g_slot
+                else:
+                    # 메인 모니터가 아니면 그냥 순서대로 채웁니다.
+                    main_idx = 0
+            else:
+                main_idx = self.monitor_config.get("main_slot_index", 0)
+
             if main_idx >= num_slots:
                 main_idx = 0
 

@@ -10,8 +10,8 @@ WINEVENT_OUTOFCONTEXT = 0x0000
 
 
 class FocusMonitor:
-    def __init__(self, tracker, paused_event):
-        self.tracker = tracker  # 단일 WindowTracker 인스턴스
+    def __init__(self, trackers_dict, paused_event):
+        self.trackers_dict = trackers_dict  # 모니터 인덱스별 WindowTracker 딕셔너리
         # [안전 장치] 외부에서 모니터링을 안전하게 일시정지/재개할 수 있도록 스레드 이벤트 객체를 사용합니다.
         self.paused_event = paused_event
         self.hook = None
@@ -34,8 +34,17 @@ class FocusMonitor:
 
         # [이해 포인트] 발생한 이벤트가 포그라운드 창 변경 이벤트인지, 그리고 창 핸들(hwnd)이 유효한지 확인합니다.
         if event == EVENT_SYSTEM_FOREGROUND and hwnd:
-            # [핵심 로직] 전달받은 창 핸들을 Tracker 객체로 넘겨 창 추적 로직을 수행하도록 위임합니다.
-            self.tracker.on_focus_event(hwnd)
+            # 창이 위치한 모니터 찾기
+            try:
+                # [핵심 로직] 창 중앙 좌표가 위치한 모니터를 판별합니다.
+                from .win_utils import is_window_in_rect
+
+                # 모든 트래커를 순회하며 해당 창을 가지고 있는 (또는 영역 안에 있는) 트래커에게 이벤트를 전달합니다.
+                # 각 트래커 내부의 on_focus_event에서도 유효성 검사를 하므로 안전합니다.
+                for tracker in self.trackers_dict.values():
+                    tracker.on_focus_event(hwnd)
+            except Exception as e:
+                pass
 
     def start(self):
         # [이해 포인트] 윈도우 메시지 루프가 메인 스레드를 블로킹(멈춤)하지 않도록 별도의 백그라운드 스레드에서 실행되는 함수입니다.
