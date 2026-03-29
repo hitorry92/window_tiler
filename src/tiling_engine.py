@@ -506,10 +506,17 @@ class WindowTracker:
                     if not s.get("locked", False):
                         s["hwnd"] = None
 
+            # 현재 모든 슬롯에 배정된 창 HWND 수집 (고정 여부와 관계없이)
+            already_assigned = {s["hwnd"] for s in self.slots if s.get("hwnd")}
+            # 이미 배정된 창은 targets에서 제외 (중복 배정 방지)
+            filtered_targets = [w for w in targets if w[0] not in already_assigned]
+
             # 필터링된 창들을 순서대로 밀어넣기
             for i, slot_idx in enumerate(fill_order):
-                if not self.slots[slot_idx].get("locked", False) and i < len(targets):
-                    self.slots[slot_idx]["hwnd"] = targets[i][0]
+                if not self.slots[slot_idx].get("locked", False) and i < len(
+                    filtered_targets
+                ):
+                    self.slots[slot_idx]["hwnd"] = filtered_targets[i][0]
 
             self.reposition_all()
             return sum(1 for s in self.slots if s["hwnd"])

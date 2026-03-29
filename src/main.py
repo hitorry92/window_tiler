@@ -158,6 +158,17 @@ class WindowTilerApp:
             # 사용 가능한 창 목록 복사
             available_targets = list(targets)
 
+            # 현재 모든 슬롯에 배정된 창 HWND 수집 (고정 여부와 관계없이)
+            assigned_hwnds = set()
+            for tracker in self.trackers.values():
+                for s in tracker.slots:
+                    if s.get("hwnd"):
+                        assigned_hwnds.add(s["hwnd"])
+            # 이미 배정된 창은 제외 (중복 배정 방지) - targets는 HWND 리스트
+            available_targets = [
+                w for w in available_targets if w not in assigned_hwnds
+            ]
+
             for tracker, slot_idx in fill_queue:
                 if not available_targets:
                     break
