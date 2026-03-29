@@ -11,7 +11,7 @@ class HotkeyEntryWidget(ttk.Entry):
         initial_hotkey,
         on_hotkey_changed,
         set_status_callback=None,
-        fallback_hotkey="Ctrl+Shift+T",
+        fallback_hotkey="Ctrl+Shift+E",
         **kwargs,
     ):
         # [이해 포인트] 위젯에 표시될 단축키 문자열을 저장하는 변수입니다.

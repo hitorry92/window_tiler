@@ -23,7 +23,7 @@ class SplitPanel(ttk.Frame):
         ttk.Label(self, text="🔢 단축키:", style="Container.TLabel").pack(
             side="left", padx=(0, 5)
         )
-        fallback = self.app.config.get("hotkey", "Ctrl+Shift+T")
+        fallback = self.app.config.get("hotkey", "Ctrl+Shift+E")
         self.hotkey_entry = HotkeyEntryWidget(
             self,
             initial_hotkey=fallback,
