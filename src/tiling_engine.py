@@ -36,14 +36,15 @@ class WindowTracker:
         self.request_global_swap_callback = request_global_swap_callback
 
         # [위험] 이 엔진은 백그라운드 검사 스레드, 핫키 스레드, 윈도우 훅 스레드에서 동시다발적으로 접근됩니다.
-        # 따라서 self.slots나 self.slot_rects 같은 중요 데이터를 읽거나 쓸 때는 반드시 self.lock을 걸어야 Race Condition을 막을 수 있습니다.
+        # 따라서 self.slot_manager.slots나 self.slot_rects 같은 중요 데이터를 읽거나 쓸 때는 반드시 self.lock을 걸어야 Race Condition을 막을 수 있습니다.
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
 
-        # [핵심 변수] self.slots와 self.slot_rects는 1:1로 매칭되는 인덱스를 갖습니다.
+        # [핵심 변수] self.slot_manager.slots와 self.slot_rects는 1:1로 매칭되는 인덱스를 갖습니다.
         # self.slot_rects: 각 슬롯의 좌표 (x, y, w, h)를 가짐.
-        # self.slots: 각 슬롯에 들어간 창 정보 (hwnd, 잠금 여부, 덮개 여부)를 가짐.
-        self.slots = []
+        from .core.slot_manager import SlotManager
+
+        self.slot_manager = SlotManager(0)
         self.slot_rects = []
 
         self.monitor_info = None
@@ -56,6 +57,14 @@ class WindowTracker:
 
         # 생성 즉시 프로필과 모니터 해상도를 기반으로 슬롯의 물리적 위치(rect)를 계산합니다.
         self.update_layout()
+
+    @property
+    def slots(self):
+        return self.slot_manager.slots
+
+    @slots.setter
+    def slots(self, value):
+        self.slot_manager.slots = value
 
     def start(self):
         """백그라운드 유효성 검사 스레드를 시작합니다."""
@@ -77,20 +86,7 @@ class WindowTracker:
         while not self.stop_event.wait(2):  # 2초 대기 후 실행
             needs_ui_update = False
             with self.lock:
-                for i, slot in enumerate(list(self.slots)):
-                    # 창 핸들(hwnd)이 등록되어 있는데, 실제 윈도우가 더 이상 존재하지 않는다면(IsWindow == False)
-                    if slot["hwnd"] and not win32gui.IsWindow(slot["hwnd"]):
-                        # [이해 포인트] 고정(locked)된 슬롯은 "어떤 창을 지정했는지"만 초기화하고 설정 자체는 유지합니다.
-                        # 고정되지 않은 일반 슬롯은 모든 설정을 초기 상태로 되돌립니다.
-                        if not slot.get("locked"):
-                            self.slots[i] = {
-                                "hwnd": None,
-                                "locked": False,
-                                "overlay_enabled": slot.get("overlay_enabled", True),
-                            }
-                        else:
-                            self.slots[i]["hwnd"] = None
-                        needs_ui_update = True
+                needs_ui_update = self.slot_manager.clear_invalid_hwnds()
 
             # 변경사항이 발생했다면 UI를 새로고침합니다.
             if needs_ui_update and self.ui_update_callback:
@@ -131,7 +127,7 @@ class WindowTracker:
         is_global_main_mon = swap_mode == "global" and self.monitor_index == g_mon
 
         active_slots = []
-        for i, slot in enumerate(self.slots):
+        for i, slot in enumerate(self.slot_manager.slots):
             # 덮개를 씌워야 하는 조건 판단
             needs_overlay = False
             if swap_mode == "global":
@@ -157,41 +153,29 @@ class WindowTracker:
     def swap_slots(self, index1, index2):
         """[로직] 두 슬롯의 창을 강제로 위치 변경(스왑)합니다. (드래그 앤 드롭 등에서 사용)"""
         with self.lock:
-            slot1 = self.slots[index1]
-            slot2 = self.slots[index2]
+            success = self.slot_manager.swap(index1, index2)
 
-            # [안전 장치] 고정(locked)된 슬롯이거나 덮개가 꺼져있는 슬롯은 스왑할 수 없게 보호합니다.
-            if slot1.get("locked") or slot2.get("locked"):
-                return False
-            if not slot1.get("overlay_enabled", True) or not slot2.get(
-                "overlay_enabled", True
-            ):
-                return False
-
-            # 두 슬롯의 상태 정보를 교환합니다.
-            self.slots[index1], self.slots[index2] = slot2, slot1
-            self.reposition_all()  # 윈도우 물리적 위치 이동
-
-            if self.ui_update_callback:
-                self.ui_update_callback()
-            return True
+            if success:
+                self.reposition_all()  # 윈도우 물리적 위치 이동
+                if self.ui_update_callback:
+                    self.ui_update_callback()
+            return success
 
     def toggle_slot_lock(self, index):
         """특정 슬롯의 고정 상태를 토글합니다."""
         with self.lock:
-            self.slots[index]["locked"] = not self.slots[index].get("locked", False)
+            self.slot_manager.toggle_lock(index)
             if self.ui_update_callback:
                 self.ui_update_callback()
 
     def toggle_overlay(self, index):
         """특정 슬롯의 덮개(방어막) 상태를 토글합니다."""
         with self.lock:
-            current = self.slots[index].get("overlay_enabled", True)
-            self.slots[index]["overlay_enabled"] = not current
+            changed = self.slot_manager.toggle_overlay(index)
 
             # 덮개를 껐다면 즉시 제거해줍니다.
             if (
-                not self.slots[index]["overlay_enabled"]
+                not self.slot_manager.slots[index]["overlay_enabled"]
                 and self.overlay_manager
                 and index in self.overlay_manager.overlays
             ):
@@ -208,25 +192,25 @@ class WindowTracker:
     def swap_to_main(self, target_idx):
         """[로직] 단축키나 클릭 이벤트를 받았을 때 특정 슬롯을 메인 슬롯과 자리를 바꿉니다."""
         with self.lock:
-            if target_idx < 0 or target_idx >= len(self.slots):
+            if target_idx < 0 or target_idx >= len(self.slot_manager.slots):
                 return
             main_idx = self.monitor_config.get("main_slot_index", 0)
-            if main_idx >= len(self.slots):
+            if main_idx >= len(self.slot_manager.slots):
                 main_idx = 0
 
             # 메인이나 타겟이 고정되어 있다면 무시합니다.
-            if self.slots[main_idx].get("locked", False) or self.slots[target_idx].get(
+            if self.slot_manager.slots[main_idx].get(
                 "locked", False
-            ):
+            ) or self.slot_manager.slots[target_idx].get("locked", False):
                 return
 
             if main_idx == target_idx:
                 return
 
             # 스왑
-            self.slots[main_idx], self.slots[target_idx] = (
-                self.slots[target_idx],
-                self.slots[main_idx],
+            self.slot_manager.slots[main_idx], self.slot_manager.slots[target_idx] = (
+                self.slot_manager.slots[target_idx],
+                self.slot_manager.slots[main_idx],
             )
             self.reposition_all()
 
@@ -269,79 +253,20 @@ class WindowTracker:
                 gap,
             )
 
-            # 슬롯 갯수가 변경되었을 수 있으므로 self.slots(창 상태 배열)의 크기를 맞춥니다.
+            # 슬롯 갯수가 변경되었을 수 있으므로 self.slot_manager.slots(창 상태 배열)의 크기를 맞춥니다.
             num_slots = len(self.slot_rects)
-            while len(self.slots) < num_slots:
-                self.slots.append(
+            while len(self.slot_manager.slots) < num_slots:
+                self.slot_manager.slots.append(
                     {"hwnd": None, "locked": False, "overlay_enabled": True}
                 )
-            self.slots = self.slots[:num_slots]
+            self.slot_manager.slots = self.slot_manager.slots[:num_slots]
 
     def _calculate_slots(self, x, y, w, h, h_splits, v_splits, merges=None, gap=0):
-        """수직/수평 분할 비율 리스트를 받아 실제 픽셀 좌표(사각형)로 변환하는 알고리즘"""
-        # 양 끝점(0.0과 1.0)을 포함하여 쪼갤 기준선을 만듭니다.
-        h_points = [0.0] + sorted(h_splits) + [1.0]
-        v_points = [0.0] + sorted(v_splits) + [1.0]
+        from .core.layout_calculator import LayoutCalculator
 
-        base_slots = []
-        # 그리드 기반으로 베이스 슬롯 생성
-        for i in range(len(h_points) - 1):
-            for j in range(len(v_points) - 1):
-                sx = int(x + v_points[j] * w)
-                sy = int(y + h_points[i] * h)
-                sw = int(v_points[j + 1] * w - v_points[j] * w)
-                sh = int(h_points[i + 1] * h - h_points[i] * h)
-
-                # 사용자 설정 여백(gap) 적용. 최소 1픽셀은 보장.
-                rect = (sx + gap, sy + gap, max(1, sw - 2 * gap), max(1, sh - 2 * gap))
-                base_slots.append({"rect": rect, "base_indices": [len(base_slots)]})
-
-        if not merges:
-            return base_slots
-
-        # [로직] 슬롯 병합 처리 (사용자가 우클릭으로 칸을 합친 경우)
-        merged_map = {}
-        for i, group in enumerate(merges):
-            for idx in group:
-                merged_map[idx] = i  # 이 인덱스의 슬롯은 i번째 그룹에 속함
-
-        final_slots = []
-        groups_added = set()
-
-        for idx in range(len(base_slots)):
-            if idx in merged_map:
-                gid = merged_map[idx]
-                if gid not in groups_added:
-                    # 그룹 전체를 아우르는 거대한 사각형(Bounding Box)을 계산합니다.
-                    group = merges[gid]
-                    gx = min(
-                        base_slots[i]["rect"][0] for i in group if i < len(base_slots)
-                    )
-                    gy = min(
-                        base_slots[i]["rect"][1] for i in group if i < len(base_slots)
-                    )
-                    g_right = max(
-                        base_slots[i]["rect"][0] + base_slots[i]["rect"][2] + gap
-                        for i in group
-                        if i < len(base_slots)
-                    )
-                    g_bottom = max(
-                        base_slots[i]["rect"][1] + base_slots[i]["rect"][3] + gap
-                        for i in group
-                        if i < len(base_slots)
-                    )
-
-                    final_slots.append(
-                        {
-                            "rect": (gx, gy, g_right - gx, g_bottom - gy),
-                            "base_indices": list(group),
-                        }
-                    )
-                    groups_added.add(gid)
-            else:
-                final_slots.append(base_slots[idx])
-
-        return final_slots
+        return LayoutCalculator.calculate_slots(
+            x, y, w, h, h_splits, v_splits, merges, gap
+        )
 
     def on_focus_event(self, hwnd):
         """
@@ -373,14 +298,14 @@ class WindowTracker:
         swap_request_args = None
 
         with self.lock:
-            if not any(s["hwnd"] == hwnd for s in self.slots):
+            if not any(s["hwnd"] == hwnd for s in self.slot_manager.slots):
                 return
             m = self.monitor_info
             if not is_window_in_rect(hwnd, (m["x"], m["y"], m["width"], m["height"])):
                 return
 
             old_idx = -1
-            for i, s in enumerate(self.slots):
+            for i, s in enumerate(self.slot_manager.slots):
                 if s["hwnd"] == hwnd:
                     old_idx = i
                     break
@@ -398,13 +323,13 @@ class WindowTracker:
                         swap_request_args = (self.monitor_index, old_idx)
                 else:  # 자신이 글로벌 메인 모니터
                     main_idx = get_config_value(self.config, "global_main_slot", 0)
-                    if self.slots[main_idx]["hwnd"] != hwnd:
+                    if self.slot_manager.slots[main_idx]["hwnd"] != hwnd:
                         action = "local_swap"
             else:  # 로컬 모드
                 main_idx = self.monitor_config.get("main_slot_index", 0)
-                if main_idx >= len(self.slots):
+                if main_idx >= len(self.slot_manager.slots):
                     main_idx = 0
-                if self.slots[main_idx]["hwnd"] != hwnd:
+                if self.slot_manager.slots[main_idx]["hwnd"] != hwnd:
                     action = "local_swap"
 
         # [2단계: 실행] Lock 밖에서 결정된 행동을 실행합니다.
@@ -417,8 +342,8 @@ class WindowTracker:
             self.swap_to_main(old_idx)
 
     def reposition_all(self):
-        """[핵심 행동] 현재 self.slots에 매핑된 상태 그대로 OS API를 이용해 실제 윈도우들을 이동시킵니다."""
-        for i, slot in enumerate(self.slots):
+        """[핵심 행동] 현재 self.slot_manager.slots에 매핑된 상태 그대로 OS API를 이용해 실제 윈도우들을 이동시킵니다."""
+        for i, slot in enumerate(self.slot_manager.slots):
             hwnd = slot["hwnd"]
             if hwnd and win32gui.IsWindow(hwnd):
                 rect = self.slot_rects[i]["rect"]
@@ -479,30 +404,26 @@ class WindowTracker:
             fill_order = [main_idx] + [i for i in range(num_slots) if i != main_idx]
 
             # 기존에 배정된 슬롯 초기화 (단, 잠긴 슬롯은 보호)
-            if not self.slots:
-                self.slots = [
-                    {"hwnd": None, "locked": False, "overlay_enabled": True}
-                    for _ in range(num_slots)
-                ]
+            if not self.slot_manager.slots:
+                self.slot_manager.resize(num_slots)
             else:
-                for s in self.slots:
-                    if not s.get("locked", False):
-                        s["hwnd"] = None
+                self.slot_manager.clear_unlocked_slots()
 
             # 현재 모든 슬롯에 배정된 창 HWND 수집 (고정 여부와 관계없이)
-            already_assigned = {s["hwnd"] for s in self.slots if s.get("hwnd")}
+            already_assigned = self.slot_manager.get_assigned_hwnds()
+
             # 이미 배정된 창은 targets에서 제외 (중복 배정 방지)
             filtered_targets = [w for w in targets if w[0] not in already_assigned]
 
             # 필터링된 창들을 순서대로 밀어넣기
             for i, slot_idx in enumerate(fill_order):
-                if not self.slots[slot_idx].get("locked", False) and i < len(
-                    filtered_targets
-                ):
-                    self.slots[slot_idx]["hwnd"] = filtered_targets[i][0]
+                if not self.slot_manager.slots[slot_idx].get(
+                    "locked", False
+                ) and i < len(filtered_targets):
+                    self.slot_manager.slots[slot_idx]["hwnd"] = filtered_targets[i][0]
 
             self.reposition_all()
-            return sum(1 for s in self.slots if s["hwnd"])
+            return sum(1 for s in self.slot_manager.slots if s["hwnd"])
 
     def start_assignment_mode(self):
         """
@@ -531,11 +452,11 @@ class WindowTracker:
             slot_idx = self.assignment_queue.pop(0)
 
             # 이미 다른 슬롯에 이 창이 있다면 비워줌 (중복 방지)
-            for i in range(len(self.slots)):
-                if self.slots[i]["hwnd"] == hwnd:
-                    self.slots[i]["hwnd"] = None
+            for i in range(len(self.slot_manager.slots)):
+                if self.slot_manager.slots[i]["hwnd"] == hwnd:
+                    self.slot_manager.slots[i]["hwnd"] = None
 
-            self.slots[slot_idx]["hwnd"] = hwnd
+            self.slot_manager.slots[slot_idx]["hwnd"] = hwnd
             self.reposition_all()
 
             if not self.assignment_queue:
