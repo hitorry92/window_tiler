@@ -111,7 +111,7 @@ class WindowTilerApp:
     def global_auto_fill(self, excluded_windows=None, is_specific_targets=False):
         """[핵심 로직] 글로벌 스왑 모드일 때 전체 모니터를 대상으로 자동 지정을 수행합니다."""
         import win32gui
-        from .win_utils import get_window_list
+        from .win_utils import get_window_list, is_own_window
 
         if is_specific_targets:
             targets = excluded_windows if excluded_windows else []
@@ -124,7 +124,7 @@ class WindowTilerApp:
                 w[0]
                 for w in windows
                 if w[0] != my_hwnd
-                and "Window Tiler" not in w[1]
+                and not is_own_window(w[1])
                 and w[1] not in excluded_windows
             ]
 

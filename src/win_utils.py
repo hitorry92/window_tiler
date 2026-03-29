@@ -97,7 +97,7 @@ def is_valid_window(hwnd):
             return False
 
         # 자신의 GUI 창 제외
-        if class_name in ["Tk", "TkTopLevel"] and "Window Tiler" in title:
+        if class_name in ["Tk", "TkTopLevel"] and is_own_window(title):
             return False
 
         # Tool windows 제외
@@ -118,6 +118,11 @@ def is_valid_window(hwnd):
         return False
 
     return True
+
+
+def is_own_window(title):
+    """창 제목이 Window Tiler 자신의 창인지 확인"""
+    return title.strip() == "Window Tiler"
 
 
 # [핵심 로직] 특정 창의 중심이 지정된 모니터(사각형 영역) 안에 위치하는지 검사합니다.

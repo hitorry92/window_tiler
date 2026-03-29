@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import ttk, messagebox
-from src.win_utils import get_window_list
+from src.win_utils import get_window_list, is_own_window
 
 
 class WindowSelector:
@@ -101,7 +101,7 @@ class WindowSelector:
 
         for i, (hwnd, title) in enumerate(self.windows):
             # [안전 장치] 제목이 없거나, 자기 자신(Window Tiler)인 경우 목록에서 제외하여 잘못 선택되는 것을 방지합니다.
-            if title and "Window Tiler" not in title:
+            if title and not is_own_window(title):
                 # [이해 포인트] tags 매개변수에 인덱스 'i'를 문자열로 저장해두어, 나중에 사용자가 항목을 선택했을 때 어떤 창인지 쉽게 찾을 수 있게 합니다.
                 self.tree.insert("", "end", values=(title,), tags=(str(i),))
 

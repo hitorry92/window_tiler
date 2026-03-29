@@ -444,7 +444,7 @@ class WindowTracker:
         """
         [로직] 현재 화면에 켜져 있는 유효한 창들을 긁어모아 빈 슬롯에 전부 꽂아 넣습니다.
         """
-        from .win_utils import get_window_list
+        from .win_utils import get_window_list, is_own_window
 
         if excluded_windows is None:
             excluded_windows = []
@@ -458,7 +458,7 @@ class WindowTracker:
             w
             for w in windows
             if w[0] != my_hwnd
-            and "Window Tiler" not in w[1]
+            and not is_own_window(w[1])
             and w[1] not in excluded_windows
         ]
 

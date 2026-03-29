@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # [핵심 로직] 운영체제에 열려 있는 실제 윈도우 창 목록을 가져오는 함수입니다.
-from src.win_utils import get_window_list
+from src.win_utils import get_window_list, is_own_window
 
 
 class ExcludedWindowSelector:
@@ -106,7 +106,7 @@ class ExcludedWindowSelector:
 
         for i, (hwnd, title) in enumerate(self.windows):
             # [위험] 이 프로그램 자체의 이름("Window Tiler")이 목록에 포함되는 것을 하드코딩으로 막고 있습니다. 프로그램 이름이 바뀌면 이 부분도 수정해야 합니다.
-            if title and "Window Tiler" not in title:
+            if title and not is_own_window(title):
                 values = (title,)
                 # [이해 포인트] 각 항목이 몇 번째 윈도우인지 기억하기 위해 tags에 인덱스(i)를 문자열로 저장해둡니다.
                 tags = (str(i),)
