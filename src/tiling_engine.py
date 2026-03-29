@@ -11,6 +11,7 @@ from .win_utils import (
     get_monitor_dpi_scale_by_hwnd,
     get_monitor_dpi_scale,
 )
+from .app_config import DEFAULT_SWAP_MODE, DEFAULT_PROFILE
 
 
 # [이해 포인트] 이 클래스는 전체 프로그램의 심장이자 뇌 역할을 합니다.
@@ -125,7 +126,9 @@ class WindowTracker:
 
         # [수정] 글로벌 스왑 모드일 경우, 로컬 메인 슬롯(main_idx)은 일반 슬롯 취급하고 오직 글로벌 메인 슬롯만 덮개를 뺍니다.
         swap_mode = (
-            self.app_config.get("swap_mode", "local") if self.app_config else "local"
+            self.app_config.get("swap_mode", DEFAULT_SWAP_MODE)
+            if self.app_config
+            else DEFAULT_SWAP_MODE
         )
         g_mon = self.app_config.get("global_main_monitor", 0) if self.app_config else 0
         g_slot = self.app_config.get("global_main_slot", 0) if self.app_config else 0
@@ -244,8 +247,10 @@ class WindowTracker:
                 return
 
             # 프로필 가져오기 우선순위 로직
-            profile_name = self.monitor_config.get("profile", "기본")
-            profile = self.profiles.get(profile_name) or self.profiles.get("기본")
+            profile_name = self.monitor_config.get("profile", DEFAULT_PROFILE)
+            profile = self.profiles.get(profile_name) or self.profiles.get(
+                DEFAULT_PROFILE
+            )
             if not profile and self.profiles:
                 profile = next(iter(self.profiles.values()))
             if not profile:
@@ -388,9 +393,9 @@ class WindowTracker:
                 return
 
             swap_mode = (
-                self.app_config.get("swap_mode", "local")
+                self.app_config.get("swap_mode", DEFAULT_SWAP_MODE)
                 if self.app_config
-                else "local"
+                else DEFAULT_SWAP_MODE
             )
 
             if swap_mode == "global":
@@ -465,9 +470,9 @@ class WindowTracker:
         with self.lock:
             num_slots = len(self.slot_rects)
             swap_mode = (
-                self.app_config.get("swap_mode", "local")
+                self.app_config.get("swap_mode", DEFAULT_SWAP_MODE)
                 if self.app_config
-                else "local"
+                else DEFAULT_SWAP_MODE
             )
 
             if swap_mode == "global":

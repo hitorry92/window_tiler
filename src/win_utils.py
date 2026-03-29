@@ -122,7 +122,9 @@ def is_valid_window(hwnd):
 
 def is_own_window(title):
     """창 제목이 Window Tiler 자신의 창인지 확인"""
-    return title.strip() == "Window Tiler"
+    from src.app_config import APP_NAME
+
+    return title.strip() == APP_NAME
 
 
 # [핵심 로직] 특정 창의 중심이 지정된 모니터(사각형 영역) 안에 위치하는지 검사합니다.

@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from src.gui.theme import THEME
 from src.gui.hotkey_entry import HotkeyEntryWidget
-from src.app_config import save_config
+from src.app_config import save_config, DEFAULT_PROFILE
 
 
 class SplitPanel(ttk.Frame):
@@ -59,8 +59,8 @@ class SplitPanel(ttk.Frame):
     def _get_current_profile(self):
         idx_str = str(self.app.config.get("monitor_index", 0))
         mon_config = self.app.config.get("monitor_configs", {}).get(idx_str, {})
-        p_name = mon_config.get("profile", "기본")
-        return self.app.profiles.get(p_name, self.app.profiles.get("기본", {}))
+        p_name = mon_config.get("profile", DEFAULT_PROFILE)
+        return self.app.profiles.get(p_name, self.app.profiles.get(DEFAULT_PROFILE, {}))
 
     def _add_v_split(self):
         p = self._get_current_profile()
@@ -94,8 +94,8 @@ class NumericalInputsPanel(ttk.Frame):
     def _get_current_profile(self):
         idx_str = str(self.app.config.get("monitor_index", 0))
         mon_config = self.app.config.get("monitor_configs", {}).get(idx_str, {})
-        p_name = mon_config.get("profile", "기본")
-        return self.app.profiles.get(p_name, self.app.profiles.get("기본", {}))
+        p_name = mon_config.get("profile", DEFAULT_PROFILE)
+        return self.app.profiles.get(p_name, self.app.profiles.get(DEFAULT_PROFILE, {}))
 
     def update_inputs(self):
         for child in self.v_scroll_frame.winfo_children():

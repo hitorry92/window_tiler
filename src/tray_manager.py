@@ -1,4 +1,5 @@
 from . import win_utils
+from .app_config import APP_NAME
 import pystray
 from PIL import Image, ImageDraw
 import threading
@@ -50,7 +51,7 @@ class TrayManager:
         )
 
         self.icon = pystray.Icon(
-            "WindowTiler", self._create_image("green"), "Window Tiler", menu
+            "WindowTiler", self._create_image("green"), APP_NAME, menu
         )
         # [위험] 트레이 아이콘 실행(run)은 블로킹(blocking) 호출이므로, 메인 스레드가 멈추지 않도록 별도의 백그라운드 데몬 스레드에서 실행해야 합니다.
         threading.Thread(target=self.icon.run, daemon=True).start()
@@ -62,7 +63,7 @@ class TrayManager:
         color = "gray" if self.is_paused else "green"
 
         self.icon.icon = self._create_image(color)
-        self.icon.title = f"Window Tiler - {status_text}"
+        self.icon.title = f"{APP_NAME} - {status_text}"
 
         # 외부 콜백 호출
         # [이해 포인트] 상태 변경이 완료되면 메인 프로그램에도 이 사실을 알려서 실제 동작을 제어하도록 합니다.
@@ -76,7 +77,7 @@ class TrayManager:
         if self.icon:
             self.icon.icon = self._create_image(color)
             status_text = "일시정지" if paused else "실행 중"
-            self.icon.title = f"Window Tiler - {status_text}"
+            self.icon.title = f"{APP_NAME} - {status_text}"
 
     def stop(self):
         # [위험] 프로그램 종료 시 트레이 아이콘이 시스템 트레이에 남아있는 버그(고스트 아이콘)를 방지하기 위해 명시적으로 stop()을 호출해야 합니다.

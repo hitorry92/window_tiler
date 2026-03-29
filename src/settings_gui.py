@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from .app_config import save_config
+from .app_config import save_config, APP_NAME
 from .gui.theme import THEME, setup_styles
 from .gui.preview_canvas import PreviewCanvas
 from .gui.slot_tree import SlotTreeView
@@ -63,7 +63,7 @@ class SettingsGUI:
 
         # [핵심 로직] Tkinter의 최상위 메인 윈도우(root) 객체를 생성하고 제목을 설정합니다.
         self.root = tk.Tk()
-        self.root.title("Window Tiler")
+        self.root.title(APP_NAME)
 
         # [위험] 창 우상단의 X 버튼(닫기)을 눌렀을 때 프로그램이 바로 종료되는 것을 막고 커스텀 함수(hide)를 실행합니다.
         self.root.protocol("WM_DELETE_WINDOW", self.hide)

@@ -1,6 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, simpledialog, messagebox
-from src.app_config import save_config, save_profiles, load_profiles
+from src.app_config import (
+    save_config,
+    save_profiles,
+    load_profiles,
+    DEFAULT_SWAP_MODE,
+    DEFAULT_PROFILE,
+)
 from src.win_utils import get_all_monitors
 from src.gui.theme import THEME
 
@@ -40,7 +46,7 @@ class ProfilePanel(ttk.Frame):
         )
         self.mode_combo = ttk.Combobox(self, state="readonly", width=10)
         self.mode_combo["values"] = ["로컬 모드", "글로벌 모드"]
-        current_mode = self.app.config.get("swap_mode", "local")
+        current_mode = self.app.config.get("swap_mode", DEFAULT_SWAP_MODE)
         self.mode_combo.set("글로벌 모드" if current_mode == "global" else "로컬 모드")
         self.mode_combo.bind("<<ComboboxSelected>>", self._on_mode_change)
         self.mode_combo.pack(side="left", padx=(0, 10))
@@ -59,7 +65,7 @@ class ProfilePanel(ttk.Frame):
 
     def _on_mode_change(self, event):
         val = self.mode_combo.get()
-        mode = "global" if val == "글로벌 모드" else "local"
+        mode = "global" if val == "글로벌 모드" else DEFAULT_SWAP_MODE
         self.app.config["swap_mode"] = mode
         save_config(self.app.config)
         self.set_status(f"● 모드 전환: {val} 적용됨", "success")
@@ -127,7 +133,7 @@ class ProfilePanel(ttk.Frame):
         curr = (
             self.app.config.get("monitor_configs", {})
             .get(idx_str, {})
-            .get("profile", "기본")
+            .get("profile", DEFAULT_PROFILE)
         )
 
         if curr in names:
@@ -143,7 +149,7 @@ class ProfilePanel(ttk.Frame):
         current_name = (
             self.app.config.get("monitor_configs", {})
             .get(idx_str, {})
-            .get("profile", "기본")
+            .get("profile", DEFAULT_PROFILE)
         )
         display_name = f"{current_name}*" if self.app.profile_modified else current_name
         current_values = list(self.prof_combo["values"])
@@ -168,7 +174,7 @@ class ProfilePanel(ttk.Frame):
         current_profile = (
             self.app.config.get("monitor_configs", {})
             .get(idx_str, {})
-            .get("profile", "기본")
+            .get("profile", DEFAULT_PROFILE)
         )
 
         if self.app.profile_modified:
@@ -223,10 +229,10 @@ class ProfilePanel(ttk.Frame):
             profile_name = (
                 self.app.config.get("monitor_configs", {})
                 .get(idx_str, {})
-                .get("profile", "기본")
+                .get("profile", DEFAULT_PROFILE)
             )
             curr_profile = self.app.profiles.get(
-                profile_name, self.app.profiles.get("기본", {})
+                profile_name, self.app.profiles.get(DEFAULT_PROFILE, {})
             )
             self.app.profiles[name] = {
                 "horizontal": list(curr_profile.get("horizontal", [])),
@@ -262,7 +268,7 @@ class ProfilePanel(ttk.Frame):
         name = (
             self.app.config.get("monitor_configs", {})
             .get(idx_str, {})
-            .get("profile", "기본")
+            .get("profile", DEFAULT_PROFILE)
         )
 
         tracker = self.app.trackers.get(idx)
@@ -286,22 +292,22 @@ class ProfilePanel(ttk.Frame):
         name = (
             self.app.config.get("monitor_configs", {})
             .get(idx_str, {})
-            .get("profile", "기본")
+            .get("profile", DEFAULT_PROFILE)
         )
 
-        if name == "기본":
+        if name == DEFAULT_PROFILE:
             messagebox.showwarning("오류", "'기본' 프로필은 삭제할 수 없습니다.")
             return
         if messagebox.askyesno("삭제 확인", f"'{name}' 프로필을 삭제하시겠습니까?"):
             if name in self.app.profiles:
                 del self.app.profiles[name]
 
-            self.app.config["profile"] = "기본"
+            self.app.config["profile"] = DEFAULT_PROFILE
             if (
                 "monitor_configs" in self.app.config
                 and idx_str in self.app.config["monitor_configs"]
             ):
-                self.app.config["monitor_configs"][idx_str]["profile"] = "기본"
+                self.app.config["monitor_configs"][idx_str]["profile"] = DEFAULT_PROFILE
 
             save_profiles(self.app.profiles)
             save_config(self.app.config)

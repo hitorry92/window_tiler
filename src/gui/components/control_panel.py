@@ -3,7 +3,7 @@ from tkinter import ttk, messagebox
 from src.gui.theme import THEME
 from src.gui.window_selector import WindowSelector
 from src.gui.excluded_window_selector import ExcludedWindowSelector
-from src.app_config import save_config
+from src.app_config import save_config, DEFAULT_SWAP_MODE
 
 
 class ControlPanel(ttk.Frame):
@@ -98,7 +98,7 @@ class ControlPanel(ttk.Frame):
 
     def _auto_fill(self):
         excluded = self.app.config.get("excluded_windows", [])
-        swap_mode = self.app.config.get("swap_mode", "local")
+        swap_mode = self.app.config.get("swap_mode", DEFAULT_SWAP_MODE)
 
         if swap_mode == "global":
             # SettingsGUI에 프록시(대리) 함수를 만들어 호출
@@ -112,7 +112,7 @@ class ControlPanel(ttk.Frame):
 
     def _show_window_selector(self):
         def on_apply(selected_hwnds):
-            swap_mode = self.app.config.get("swap_mode", "local")
+            swap_mode = self.app.config.get("swap_mode", DEFAULT_SWAP_MODE)
             if swap_mode == "global":
                 count = self.app.global_auto_fill(
                     selected_hwnds, is_specific_targets=True

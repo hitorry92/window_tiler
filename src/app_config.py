@@ -1,16 +1,25 @@
 import json
 import os
 
+# [핵심 상수] 프로그램 정보
+APP_NAME = "Window Tiler"
+
+# [핵심 상수] 기본값
+DEFAULT_PROFILE = "기본"
+DEFAULT_SWAP_MODE = "local"
+DEFAULT_DELAY = 0.3
+DEFAULT_POLL_INTERVAL = 0.1
+
 # [핵심 로직] 프로그램 설정 및 프로필을 저장할 파일명 정의
 CONFIG_FILE = "config.json"
 PROFILES_FILE = "profiles.json"
 
 # [이해 포인트] 프로그램이 처음 실행되거나 설정 파일이 없을 때 사용할 기본 설정값 (단축키, 딜레이 등)
 DEFAULT_CONFIG = {
-    "profile": "기본",
+    "profile": DEFAULT_PROFILE,
     "main_slot_index": 0,
-    "delay": 0.3,
-    "poll_interval": 0.1,
+    "delay": DEFAULT_DELAY,
+    "poll_interval": DEFAULT_POLL_INTERVAL,
     "monitor_index": 0,
     "hotkey": "Ctrl+Shift+E",
     "gap": 0,
@@ -19,7 +28,12 @@ DEFAULT_CONFIG = {
 
 # [이해 포인트] 창 배치 분할 비율이나 위치 정보를 담고 있는 초기 프로필 데이터
 DEFAULT_PROFILES = {
-    "기본": {"horizontal": [], "vertical": [0.5], "merges": [], "main_slot_index": 0}
+    DEFAULT_PROFILE: {
+        "horizontal": [],
+        "vertical": [0.5],
+        "merges": [],
+        "main_slot_index": 0,
+    }
 }
 
 
@@ -41,7 +55,7 @@ def load_config():
                 if mon_idx in config["monitor_configs"]:
                     mon_cfg = config["monitor_configs"][mon_idx]
                     if "profile" not in config:
-                        config["profile"] = mon_cfg.get("profile", "기본")
+                        config["profile"] = mon_cfg.get("profile", DEFAULT_PROFILE)
                     if "main_slot_index" not in config:
                         config["main_slot_index"] = mon_cfg.get("main_slot_index", 0)
 

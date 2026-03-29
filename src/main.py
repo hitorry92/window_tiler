@@ -5,7 +5,13 @@ import ctypes
 import traceback
 import atexit  # [안전 장치] 프로그램 비정상 종료 시에도 리소스 해제를 보장하기 위해 추가
 from threading import Event
-from .app_config import load_config, load_profiles, save_config
+from .app_config import (
+    load_config,
+    load_profiles,
+    save_config,
+    DEFAULT_SWAP_MODE,
+    DEFAULT_PROFILE,
+)
 from .win_utils import get_all_monitors
 from .tiling_engine import WindowTracker
 from .event_monitor import FocusMonitor
@@ -45,7 +51,7 @@ class WindowTilerApp:
             mon_idx_str = str(i)
             if mon_idx_str not in self.config["monitor_configs"]:
                 self.config["monitor_configs"][mon_idx_str] = {
-                    "profile": "기본",
+                    "profile": DEFAULT_PROFILE,
                     "main_slot_index": 0,
                 }
 
@@ -62,8 +68,10 @@ class WindowTilerApp:
             self.trackers[i] = tracker
 
             # [프로필] 프로필에 저장된 slot_states (고정, 덮개) 복원
-            profile_name = mon_config.get("profile", "기본")
-            profile = self.profiles.get(profile_name, self.profiles.get("기본", {}))
+            profile_name = mon_config.get("profile", DEFAULT_PROFILE)
+            profile = self.profiles.get(
+                profile_name, self.profiles.get(DEFAULT_PROFILE, {})
+            )
             slot_states = profile.get("slot_states", {})
             if slot_states and tracker.slots:
                 for idx, slot in enumerate(tracker.slots):
@@ -232,7 +240,7 @@ class WindowTilerApp:
 
     def on_hotkey(self):
         """[핵심 로직] 단축키가 눌렸을 때, 현재 스왑 모드에 따라 다르게 작동합니다."""
-        swap_mode = self.config.get("swap_mode", "local")
+        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
 
         if swap_mode == "global":
             # 글로벌 모드: 모든 모니터를 한 번에 제어 (전체 시작/중지)
@@ -324,7 +332,7 @@ class WindowTilerApp:
 
     def on_slot_click(self, monitor_idx, slot_idx):
         """[핵심 로직] 오버레이를 클릭했을 때 로컬 또는 글로벌 스왑을 처리하는 라우터"""
-        swap_mode = self.config.get("swap_mode", "local")
+        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
 
         if swap_mode == "global":
             g_mon = self.config.get("global_main_monitor", 0)

@@ -2,6 +2,7 @@
 import tkinter as tk
 from .theme import THEME
 from .window_selector import WindowSelector
+from ..app_config import DEFAULT_SWAP_MODE, DEFAULT_PROFILE
 
 
 # [이해 포인트] 화면 분할 레이아웃을 시각적으로 보여주고 조작(드래그, 클릭 등)할 수 있게 해주는 Tkinter Canvas 커스텀 클래스입니다.
@@ -64,7 +65,7 @@ class PreviewCanvas(tk.Canvas):
         mon_config = self._get_mon_config()
         main_idx = mon_config.get("main_slot_index", 0)
 
-        swap_mode = self.config.get("swap_mode", "local")
+        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
         g_mon = self.config.get("global_main_monitor", 0)
         g_slot = self.config.get("global_main_slot", 0)
         is_global_main_monitor = (
@@ -113,7 +114,8 @@ class PreviewCanvas(tk.Canvas):
 
         # 분할선 그리기
         p = self.profiles.get(
-            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+            mon_config.get("profile", DEFAULT_PROFILE),
+            self.profiles.get(DEFAULT_PROFILE, {}),
         )
         ox1, oy1 = self._ratio_to_canvas(0, 0)
         ox2, oy2 = self._ratio_to_canvas(1, 1)
@@ -190,7 +192,7 @@ class PreviewCanvas(tk.Canvas):
             return
 
         mon_config = self._get_mon_config()
-        swap_mode = self.config.get("swap_mode", "local")
+        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
 
         for i, slot in enumerate(self.tracker.slot_rects):
             x1, y1, x2, y2 = self._get_canvas_coords(i)
@@ -217,7 +219,8 @@ class PreviewCanvas(tk.Canvas):
 
         mon_config = self._get_mon_config()
         p = self.profiles.get(
-            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+            mon_config.get("profile", DEFAULT_PROFILE),
+            self.profiles.get(DEFAULT_PROFILE, {}),
         )
         mx, my = event.x, event.y
         match_found = None
@@ -251,7 +254,8 @@ class PreviewCanvas(tk.Canvas):
         stype, idx = self.dragging_split["type"], self.dragging_split["index"]
         mon_config = self._get_mon_config()
         p = self.profiles.get(
-            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+            mon_config.get("profile", DEFAULT_PROFILE),
+            self.profiles.get(DEFAULT_PROFILE, {}),
         )
         rx, ry = self._canvas_to_ratio(event.x, event.y)
 
@@ -295,7 +299,7 @@ class PreviewCanvas(tk.Canvas):
             command=lambda: self.on_show_window_selector(target_idx),
         )
 
-        swap_mode = self.config.get("swap_mode", "local")
+        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
         if swap_mode == "global":
             menu.add_command(
                 label="★ 전역 메인 슬롯으로 지정 ★",
@@ -348,7 +352,8 @@ class PreviewCanvas(tk.Canvas):
 
         mon_config = self._get_mon_config()
         p = self.profiles.get(
-            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+            mon_config.get("profile", DEFAULT_PROFILE),
+            self.profiles.get(DEFAULT_PROFILE, {}),
         )
 
         num_cols = len(p.get("vertical", [])) + 1
@@ -391,7 +396,8 @@ class PreviewCanvas(tk.Canvas):
 
         mon_config = self._get_mon_config()
         p = self.profiles.get(
-            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+            mon_config.get("profile", DEFAULT_PROFILE),
+            self.profiles.get(DEFAULT_PROFILE, {}),
         )
 
         merges = p.get("merges", [])
@@ -401,7 +407,8 @@ class PreviewCanvas(tk.Canvas):
     def _reset_all_merges(self):
         mon_config = self._get_mon_config()
         p = self.profiles.get(
-            mon_config.get("profile", "기본"), self.profiles.get("기본", {})
+            mon_config.get("profile", DEFAULT_PROFILE),
+            self.profiles.get(DEFAULT_PROFILE, {}),
         )
         p["merges"] = []
         self.on_layout_update(reposition=True)
