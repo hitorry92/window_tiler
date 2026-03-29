@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import ttk
 from .theme import THEME
-from ..app_config import DEFAULT_SWAP_MODE
+from ..app_config import DEFAULT_SWAP_MODE, get_config_value
 
 
 class SlotTreeView:
@@ -19,7 +19,7 @@ class SlotTreeView:
         self.parent = parent
         self.tracker = tracker
         self.trackers = trackers
-        self.app_config = app_config
+        self.config = app_config
         self.on_update_callback = on_update_callback
         self.gui_callbacks = gui_callbacks or {}
         self.tree = None
@@ -206,11 +206,9 @@ class SlotTreeView:
         self.tree.delete(*self.tree.get_children())
         self.slot_mapping = []
 
-        is_global_mode = False
-        if self.app_config:
-            is_global_mode = (
-                self.app_config.get("swap_mode", DEFAULT_SWAP_MODE) == "global"
-            )
+        is_global_mode = (
+            get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE) == "global"
+        )
 
         # [글로벌 모드] 모든 트래커의 슬롯을 통합해서 보여줍니다.
         if is_global_mode and self.trackers:

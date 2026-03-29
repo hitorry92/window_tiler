@@ -11,7 +11,7 @@ from .win_utils import (
     get_monitor_dpi_scale_by_hwnd,
     get_monitor_dpi_scale,
 )
-from .app_config import DEFAULT_SWAP_MODE, DEFAULT_PROFILE
+from .app_config import DEFAULT_SWAP_MODE, DEFAULT_PROFILE, get_config_value
 
 
 # [이해 포인트] 이 클래스는 전체 프로그램의 심장이자 뇌 역할을 합니다.
@@ -29,7 +29,7 @@ class WindowTracker:
         self.monitor_index = monitor_index
         self.profiles = profiles  # 전체 프로필 데이터 (분할 비율 등)
         self.monitor_config = monitor_config  # 현재 모니터에 적용된 설정 (프로필 이름, 메인 슬롯 인덱스 등)
-        self.app_config = app_config  # 전체 앱 설정 (글로벌 모드 확인용)
+        self.config = app_config  # 전체 앱 설정 (글로벌 모드 확인용)
         self.ui_update_callback = (
             ui_update_callback  # 상태 변경 시 UI를 새로고침하기 위한 콜백 함수
         )
@@ -125,13 +125,9 @@ class WindowTracker:
         main_idx = self.monitor_config.get("main_slot_index", 0)
 
         # [수정] 글로벌 스왑 모드일 경우, 로컬 메인 슬롯(main_idx)은 일반 슬롯 취급하고 오직 글로벌 메인 슬롯만 덮개를 뺍니다.
-        swap_mode = (
-            self.app_config.get("swap_mode", DEFAULT_SWAP_MODE)
-            if self.app_config
-            else DEFAULT_SWAP_MODE
-        )
-        g_mon = self.app_config.get("global_main_monitor", 0) if self.app_config else 0
-        g_slot = self.app_config.get("global_main_slot", 0) if self.app_config else 0
+        swap_mode = get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE)
+        g_mon = get_config_value(self.config, "global_main_monitor", 0)
+        g_slot = get_config_value(self.config, "global_main_slot", 0)
         is_global_main_mon = swap_mode == "global" and self.monitor_index == g_mon
 
         active_slots = []
@@ -392,24 +388,16 @@ class WindowTracker:
             if old_idx == -1:
                 return
 
-            swap_mode = (
-                self.app_config.get("swap_mode", DEFAULT_SWAP_MODE)
-                if self.app_config
-                else DEFAULT_SWAP_MODE
-            )
+            swap_mode = get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE)
 
             if swap_mode == "global":
-                g_mon = (
-                    self.app_config.get("global_main_monitor", 0)
-                    if self.app_config
-                    else 0
-                )
+                g_mon = get_config_value(self.config, "global_main_monitor", 0)
                 if self.monitor_index != g_mon:
                     if self.request_global_swap_callback:
                         action = "request_global_swap"
                         swap_request_args = (self.monitor_index, old_idx)
                 else:  # 자신이 글로벌 메인 모니터
-                    main_idx = self.app_config.get("global_main_slot", 0)
+                    main_idx = get_config_value(self.config, "global_main_slot", 0)
                     if self.slots[main_idx]["hwnd"] != hwnd:
                         action = "local_swap"
             else:  # 로컬 모드
@@ -469,21 +457,11 @@ class WindowTracker:
 
         with self.lock:
             num_slots = len(self.slot_rects)
-            swap_mode = (
-                self.app_config.get("swap_mode", DEFAULT_SWAP_MODE)
-                if self.app_config
-                else DEFAULT_SWAP_MODE
-            )
+            swap_mode = get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE)
 
             if swap_mode == "global":
-                g_mon = (
-                    self.app_config.get("global_main_monitor", 0)
-                    if self.app_config
-                    else 0
-                )
-                g_slot = (
-                    self.app_config.get("global_main_slot", 0) if self.app_config else 0
-                )
+                g_mon = get_config_value(self.config, "global_main_monitor", 0)
+                g_slot = get_config_value(self.config, "global_main_slot", 0)
 
                 # 자기가 글로벌 메인 모니터라면 글로벌 메인 슬롯부터 먼저 채웁니다.
                 if self.monitor_index == g_mon:

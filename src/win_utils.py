@@ -3,6 +3,7 @@ import win32con
 import win32api
 import ctypes
 from ctypes import wintypes
+from .app_config import DEFAULT_DPI_SCALE, BASE_DPI
 
 
 # [핵심 로직] 연결된 모든 모니터의 해상도 및 작업 영역 정보를 가져오는 함수입니다.
@@ -152,9 +153,9 @@ def get_monitor_dpi_scale(hmonitor):
         ctypes.windll.shcore.GetDpiForMonitor(
             int(hmonitor), 0, ctypes.byref(dpiX), ctypes.byref(dpiY)
         )
-        return dpiX.value / 96.0
+        return dpiX.value / BASE_DPI
     except Exception:
-        return 1.0
+        return DEFAULT_DPI_SCALE
 
 
 # [핵심 로직] 특정 윈도우가 현재 위치한 모니터의 DPI 스케일 비율을 반환합니다.
@@ -166,7 +167,7 @@ def get_monitor_dpi_scale_by_hwnd(hwnd):
         return get_monitor_dpi_scale(hmonitor)
     except Exception:
         # 실패 시 기본 배율 100% (1.0) 가정
-        return 1.0
+        return DEFAULT_DPI_SCALE
 
 
 # [이해 포인트] 윈도우 10/11의 보이지 않는 그림자(Shadow) 두께를 계산합니다.

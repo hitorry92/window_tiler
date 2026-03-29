@@ -2,7 +2,12 @@
 import tkinter as tk
 from .theme import THEME
 from .window_selector import WindowSelector
-from ..app_config import DEFAULT_SWAP_MODE, DEFAULT_PROFILE
+from ..app_config import (
+    DEFAULT_SWAP_MODE,
+    DEFAULT_PROFILE,
+    get_config_value,
+    PREVIEW_MARGIN_RATIO,
+)
 
 
 # [이해 포인트] 화면 분할 레이아웃을 시각적으로 보여주고 조작(드래그, 클릭 등)할 수 있게 해주는 Tkinter Canvas 커스텀 클래스입니다.
@@ -65,9 +70,9 @@ class PreviewCanvas(tk.Canvas):
         mon_config = self._get_mon_config()
         main_idx = mon_config.get("main_slot_index", 0)
 
-        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
-        g_mon = self.config.get("global_main_monitor", 0)
-        g_slot = self.config.get("global_main_slot", 0)
+        swap_mode = get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE)
+        g_mon = get_config_value(self.config, "global_main_monitor", 0)
+        g_slot = get_config_value(self.config, "global_main_slot", 0)
         is_global_main_monitor = (
             swap_mode == "global" and self.tracker.monitor_index == g_mon
         )
@@ -132,7 +137,7 @@ class PreviewCanvas(tk.Canvas):
                 ox1, hy, ox2, hy, fill=THEME["accent"], width=1, dash=(2, 2)
             )
 
-    # [이해 포인트] 실제 모니터 상의 좌표를 캔버스 비율에 맞게 축소/변환합니다. (0.95를 곱해 여백을 줌)
+    # [이해 포인트] 실제 모니터 상의 좌표를 캔버스 비율에 맞게 축소/변환합니다. (PREVIEW_MARGIN_RATIO를 곱해 여백을 줌)
     def _get_canvas_coords(self, index):
         if (
             not self.tracker
@@ -145,7 +150,7 @@ class PreviewCanvas(tk.Canvas):
         m = self.tracker.monitor_info
         cw, ch = int(self["width"]), int(self["height"])
 
-        scale = min(cw / m["width"], ch / m["height"]) * 0.95
+        scale = min(cw / m["width"], ch / m["height"]) * PREVIEW_MARGIN_RATIO
         draw_w, draw_h = m["width"] * scale, m["height"] * scale
         ox, oy = (cw - draw_w) / 2, (ch - draw_h) / 2
 
@@ -161,7 +166,7 @@ class PreviewCanvas(tk.Canvas):
         if not self.tracker or not self.tracker.monitor_info:
             return 0, 0
         m = self.tracker.monitor_info
-        scale = min(cw / m["width"], ch / m["height"]) * 0.95
+        scale = min(cw / m["width"], ch / m["height"]) * PREVIEW_MARGIN_RATIO
         draw_w, draw_h = m["width"] * scale, m["height"] * scale
         ox, oy = (cw - draw_w) / 2, (ch - draw_h) / 2
 
@@ -176,7 +181,7 @@ class PreviewCanvas(tk.Canvas):
         if not self.tracker or not self.tracker.monitor_info:
             return rx * cw, ry * ch
         m = self.tracker.monitor_info
-        scale = min(cw / m["width"], ch / m["height"]) * 0.95
+        scale = min(cw / m["width"], ch / m["height"]) * PREVIEW_MARGIN_RATIO
         draw_w, draw_h = m["width"] * scale, m["height"] * scale
         ox, oy = (cw - draw_w) / 2, (ch - draw_h) / 2
 
@@ -192,7 +197,7 @@ class PreviewCanvas(tk.Canvas):
             return
 
         mon_config = self._get_mon_config()
-        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
+        swap_mode = get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE)
 
         for i, slot in enumerate(self.tracker.slot_rects):
             x1, y1, x2, y2 = self._get_canvas_coords(i)
@@ -299,7 +304,7 @@ class PreviewCanvas(tk.Canvas):
             command=lambda: self.on_show_window_selector(target_idx),
         )
 
-        swap_mode = self.config.get("swap_mode", DEFAULT_SWAP_MODE)
+        swap_mode = get_config_value(self.config, "swap_mode", DEFAULT_SWAP_MODE)
         if swap_mode == "global":
             menu.add_command(
                 label="★ 전역 메인 슬롯으로 지정 ★",
