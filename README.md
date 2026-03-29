@@ -96,37 +96,59 @@ python main.py
 
 ## 📂 프로젝트 구조
 
-```
-├── main.py                 # 메인 실행 파일
-├── requirements.txt        # 의존성 패키지
-├── README.md             # 프로젝트 문서
+```text
+├── main.py                 # 앱 진입점 (Bootstrap)
+├── requirements.txt        # 패키지 의존성
+├── README.md               # 프로젝트 설명 문서
 │
 ├── src/
-│   ├── main.py           # 앱 메인 클래스
-│   ├── app_config.py     # 설정 관리
-│   ├── tiling_engine.py  # 타일링 엔진
-│   ├── event_monitor.py  # 이벤트 모니터
-│   ├── hotkey_manager.py # 단축키 관리
-│   ├── tray_manager.py   # 트레이 관리
-│   ├── overlay_manager.py# 오버레이 관리
-│   ├── win_utils.py     # 윈도우 유틸리티
+│   ├── main.py             # 앱 라이프사이클 관리
+│   ├── app_config.py       # 설정 관리자 래퍼
+│   ├── tiling_engine.py    # 코어 타일링 엔진
+│   ├── event_monitor.py    # 시스템 윈도우 포커스 감지
+│   ├── hotkey_manager.py   # 전역 단축키 제어
+│   ├── tray_manager.py     # 윈도우 작업표시줄 트레이 제어
+│   ├── overlay_manager.py  # 윈도우 투명 보호 덮개 제어
+│   ├── settings_gui.py     # 앱 설정 메인 GUI
 │   │
-│   └── gui/
-│       ├── settings_gui.py      # 설정 GUI
-│       ├── preview_canvas.py    # 미리보기 캔버스
-│       ├── slot_tree.py         # 슬롯 트리 뷰
-│       ├── window_selector.py   # 창 선택기
-│       ├── hotkey_entry.py      # 단축키 입력
-│       ├── theme.py             # 테마 설정
-│       └── components/
-│           ├── profile_panel.py     # 프로필 패널
-│           ├── split_panel.py      # 분할 패널
-│           └── control_panel.py    # 제어 패널
+│   ├── core/               # 🧠 핵심 비즈니스 로직 분리
+│   │   ├── config_manager.py        # 파일 I/O 및 설정 객체
+│   │   ├── global_window_manager.py # 다중 모니터 전역 스왑 로직
+│   │   ├── layout_calculator.py     # 뷰-데이터 간 좌표 계산 분리
+│   │   ├── slot_manager.py          # 창 배정(Slot) 상태 정보 캡슐화
+│   │   └── slot_tree_controller.py  # GUI 트리뷰 이벤트 컨트롤러
+│   │
+│   ├── models/             # 📦 공통 데이터 모델 (Type Hinting)
+│   │   └── common.py                # Rect, SlotState, MonitorInfo 등
+│   │
+│   ├── win_utils/          # 🪟 Windows OS API 연동 계층
+│   │   ├── monitor_api.py           # 해상도, DPI 등 모니터 API
+│   │   ├── window_api.py            # 윈도우 이동 및 프레임 보정
+│   │   └── window_filter.py         # 유령 창 필터링 등 유효성 검사
+│   │
+│   └── gui/                # 🎨 하위 UI 위젯 및 컴포넌트
+│       ├── preview_canvas.py
+│       ├── slot_tree.py
+│       ├── window_selector.py
+│       ├── excluded_window_selector.py
+│       ├── hotkey_entry.py
+│       ├── theme.py
+│       └── components/     # 패널 단위 분리
+│           ├── profile_panel.py
+│           ├── split_panel.py
+│           └── control_panel.py
 ```
 
 ---
 
 ## 💻 개발 정보
+
+### 🏗️ 소프트웨어 아키텍처 (Architecture)
+
+최신 리팩토링을 통해 **역할 기반의 모듈화(Modularization)와 타입 힌팅(Type Hinting)**이 전면 적용되어 높은 응집도(Cohesion)와 낮은 결합도(Coupling)를 유지합니다.
+- **`src/core/`**: UI와 종속성이 없는 순수 비즈니스 및 상태 로직 계층 (`SlotManager`, `LayoutCalculator` 등)
+- **`src/win_utils/`**: OS 시스템 환경과 맞닿아 있는 외부 의존성(Windows API) 계층 분리
+- **`src/models/`**: Python `dataclass` 기반의 명확한 상태 구조체 (`MonitorInfo`, `SlotState` 등)
 
 ### 사용 기술
 
