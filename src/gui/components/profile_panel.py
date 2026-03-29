@@ -196,6 +196,12 @@ class ProfilePanel(ttk.Frame):
         tracker = self.app.tracker
         if tracker:
             tracker.monitor_config["profile"] = name
+            slot_states = self.app.profiles.get(name, {}).get("slot_states", {})
+            if slot_states and tracker.slots:
+                for i, slot in enumerate(tracker.slots):
+                    state = slot_states.get(str(i), {})
+                    slot["locked"] = state.get("locked", False)
+                    slot["overlay_enabled"] = state.get("overlay_enabled", True)
 
         self.app.request_layout_update(reposition=True)
         save_config(self.app.config)
@@ -228,6 +234,7 @@ class ProfilePanel(ttk.Frame):
                 "main_slot_index": self.app.config.get("monitor_configs", {})
                 .get(idx_str, {})
                 .get("main_slot_index", 0),
+                "slot_states": dict(curr_profile.get("slot_states", {})),
             }
 
             self.app.config["profile"] = name  # Legacy support
@@ -237,7 +244,7 @@ class ProfilePanel(ttk.Frame):
                 self.app.config["monitor_configs"][idx_str] = {}
             self.app.config["monitor_configs"][idx_str]["profile"] = name
 
-            tracker = self.app.tracker
+            tracker = self.app.trackers.get(idx)
             if tracker:
                 tracker.monitor_config["profile"] = name
 
@@ -250,6 +257,25 @@ class ProfilePanel(ttk.Frame):
             messagebox.showinfo("성공", f"'{name}' 프로필이 추가되었습니다.")
 
     def _save_current_profile(self):
+        idx = self._get_current_mon_idx()
+        idx_str = str(idx)
+        name = (
+            self.app.config.get("monitor_configs", {})
+            .get(idx_str, {})
+            .get("profile", "기본")
+        )
+
+        tracker = self.app.trackers.get(idx)
+        if tracker and tracker.slots:
+            slot_states = {}
+            for i, slot in enumerate(tracker.slots):
+                slot_states[str(i)] = {
+                    "locked": slot.get("locked", False),
+                    "overlay_enabled": slot.get("overlay_enabled", True),
+                }
+            if name in self.app.profiles:
+                self.app.profiles[name]["slot_states"] = slot_states
+
         save_profiles(self.app.profiles)
         self.app.profile_modified = False
         self.update_profile_combo_display()

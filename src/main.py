@@ -61,6 +61,16 @@ class WindowTilerApp:
             )
             self.trackers[i] = tracker
 
+            # [프로필] 프로필에 저장된 slot_states (고정, 덮개) 복원
+            profile_name = mon_config.get("profile", "기본")
+            profile = self.profiles.get(profile_name, self.profiles.get("기본", {}))
+            slot_states = profile.get("slot_states", {})
+            if slot_states and tracker.slots:
+                for idx, slot in enumerate(tracker.slots):
+                    state = slot_states.get(str(idx), {})
+                    slot["locked"] = state.get("locked", False)
+                    slot["overlay_enabled"] = state.get("overlay_enabled", True)
+
         # 현재 GUI에서 보고 있는 활성 모니터 인덱스
         self.active_monitor_index = self.config.get("monitor_index", 0)
         if self.active_monitor_index >= len(monitors):
